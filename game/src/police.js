@@ -1,132 +1,79 @@
-// SUNSET KEYS v4 — police: wanted level 0-5, cop cars and foot cops that chase,
-// roadblocks at 3+, a helicopter with a searchlight at 4-5, and wanted decay.
-import { G, clamp, rand, pick, angleTo, angleDiff, dist2, raiseWanted, toast, banner } from './state.js';
-import { makeCar, damageCar } from './vehicles.js';
+// police.js — wanted response: patrol cars, foot cops and the searchlight helicopter.
+import { G, clamp, setWanted, addXp } from './state.js';
+import { spawnCar } from './vehicles.js';
+import { spawnParticles } from './effects.js';
 
-const COP_COLORS = ['#1c2b3a', '#243447'];
-
-/** Spawn cop units scaled to the wanted level; called when wanted rises. */
-export function spawnCops() {
-  const want = G.wanted;
-  const wantCars = want >= 1 ? 1 : 0;
-  const total = wantCars + (want >= 3 ? 1 : 0) + (want >= 5 ? 1 : 0);
-  const copCars = G.cars.filter((c) => c.owner === 'cop').length;
-  for (let i = copCars; i < total; i++) {
-    const ang = rand(0, Math.PI * 2);
-    const x = clamp(G.player.x + Math.cos(ang) * 700, 60, 5140);
-    const y = clamp(G.player.y + Math.sin(ang) * 700, 60, 3740);
-    const car = makeCar(x, y, angleTo(x, y, G.player.x, G.player.y), 0, 'cop');
-    car.color = pick(COP_COLORS);
-    car.maxSpeed = 480 + want * 12;
-    car.len = 48; car.wid = 22;
-    G.cars.push(car);
-  }
-  // Foot cops at wanted 2+.
-  if (want >= 2 && G.cops.length < want) {
-    const ang = rand(0, Math.PI * 2);
-    G.cops.push({
-      x: clamp(G.player.x + Math.cos(ang) * 420, 60, 5140),
-      y: clamp(G.player.y + Math.sin(ang) * 420, 60, 3740),
-      angle: 0, speed: 150, hp: 60, shootT: rand(0.5, 1.5), kind: 'cop',
-    });
-  }
-  // Helicopter at wanted 4+.
-  if (want >= 4 && !G.heli) {
-    G.heli = { x: G.player.x + 300, y: G.player.y - 300, angle: 0, alt: 200, searchAngle: 0, shootT: 2 };
-    banner('HELIKOPTER POLISI', 'Wanted level ' + want + ' — kabur dari sorotan!');
-  }
-}
-
-/** Cop car + foot cop + helicopter AI, run every frame while wanted > 0. */
 export function updatePolice(dt) {
-  if (G.wanted > 0) {
-    G.wantedTimer += dt;
-    // Wanted decays after 25s without new crime (faster when hidden / out of sight).
-    const decayAfter = G.wanted >= 4 ? 45 : 25;
-    if (G.wantedTimer > decayAfter) {
-      G.wanted--;
-      G.wantedTimer = 0;
-      toast('Wanted turun ke ' + G.wanted + ' bintang');
-      if (G.wanted === 0) { clearPolice(); toast('Bebas — polisi kehilangan jejakmu'); }
-    }
-    spawnCops();
-  }
   const p = G.player;
-  for (const car of G.cars) {
-    if (car.owner !== 'cop') continue;
-    // Chase: steer toward the player, ram at close range.
-    const want = angleTo(car.x, car.y, p.x, p.y);
-    car.angle += clamp(angleDiff(car.angle, want), -2.4 * dt, 2.4 * dt);
-    const d = Math.hypot(p.x - car.x, p.y - car.y);
-    const targetSpeed = d > 260 ? car.maxSpeed : car.maxSpeed * 0.75;
-    car.speed = clamp(car.speed + 300 * dt, 0, targetSpeed);
-    const nx = car.x + Math.cos(car.angle) * car.speed * dt;
-    const ny = car.y + Math.sin(car.angle) * car.speed * dt;
-    car.x = nx; car.y = ny;
-    car.vx = Math.cos(car.angle) * car.speed;
-    car.vy = Math.sin(car.angle) * car.speed;
-    // Ram the player's car.
-    if (p.car && d < 55) {
-      damageCar(p.car, 6 * dt * 10);
-      p.car.speed *= 0.985;
-      if (Math.random() < dt * 4) {
-        G.particles.push({ kind: 'spark', x: p.x, y: p.y, vx: rand(-60, 60), vy: rand(-60, 60), t: 0.3, max: 0.3, color: '#ffd34d', size: 3 });
-      }
-    }
-    // Siren lights blink.
-    car.siren = (G.frame % 24) < 12;
+  if (G.wanted <= 0) {
+    if (G.police.length > 0) G.police = G.police.filter((c) => { c.hp = 0; return false; });
+    G.heli = null;
+    return;
   }
-  // Foot cops: run at the player, shoot when close (inaccurate).
-  for (let i = G.cops.length - 1; i >= 0; i--) {
-    const cop = G.cops[i];
-    if (cop.hp <= 0) { G.cops.splice(i, 1); continue; }
-    const d = Math.hypot(p.x - cop.x, p.y - cop.y);
-    const want = angleTo(cop.x, cop.y, p.x, p.y);
-    cop.angle = want;
-    // Caught on foot: busted.
-    if (d < 36 && p.onFoot && G.wanted >= 2) { busted(); return; }
-    if (d > 90) {
-      cop.x += Math.cos(want) * cop.speed * dt;
-      cop.y += Math.sin(want) * cop.speed * dt;
-    } else {
-      cop.shootT -= dt;
-      if (cop.shootT <= 0) {
-        cop.shootT = rand(0.9, 1.6);
-        G.bullets.push({ x: cop.x, y: cop.y, angle: want + rand(-0.16, 0.16), speed: 560, dmg: 5, from: 'cop', t: 1.1 });
-      }
-    }
+  G.wantedTimer += dt;
+  // Spawn patrol cars up to wanted level + 1.
+  const want = Math.min(G.wanted + 1, 6);
+  if (G.police.length < want && Math.random() < dt * 0.8) {
+    const a = Math.random() * Math.PI * 2;
+    const car = spawnCar(p.x + Math.cos(a) * 500, p.y + Math.sin(a) * 500, 'cop');
+    car.driver = 'police';
+    G.police.push(car);
   }
-  // Helicopter: hovers above the player, searchlight sweeps, spotlights the chase.
-  if (G.heli) {
-    const h = G.heli;
-    h.searchAngle += dt * 0.8;
-    const tx = p.x + Math.cos(h.searchAngle) * 120;
-    const ty = p.y + Math.sin(h.searchAngle) * 120;
-    h.x += (tx - h.x) * 0.5 * dt;
-    h.y += (ty - h.y) * 0.5 * dt;
-    h.shootT -= dt;
-    if (h.shootT <= 0 && G.wanted >= 5) {
-      h.shootT = 2.2;
-      G.bullets.push({ x: h.x, y: h.y, angle: angleTo(h.x, h.y, p.x, p.y) + rand(-0.1, 0.1), speed: 620, dmg: 8, from: 'heli', t: 1.4 });
+  for (const car of G.police) {
+    const a = Math.atan2(p.y - car.y, p.x - car.x);
+    const diff = ((a - car.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    car.angle += clamp(diff, -2.2 * dt, 2.2 * dt);
+    car.speed = clamp(car.speed + 320 * dt, 0, 380 + G.wanted * 30);
+    car.x += Math.cos(car.angle) * car.speed * dt;
+    car.y += Math.sin(car.angle) * car.speed * dt;
+    const d = Math.hypot(car.x - p.x, car.y - p.y);
+    if (d < 34) {
+      if (p.inVehicle) { p.inVehicle.hp -= 30 * dt; if (p.inVehicle.hp <= 0) { spawnParticles(car.x, car.y, '#ff8800', 20, 260, 0.8, 6); p.inVehicle.hp = 100; } }
+      else { p.hp -= 14 * dt; }
     }
-    if (G.wanted < 4) G.heli = null;
+    if (d > 900) { car.hp = 0; }
   }
+  G.police = G.police.filter((c) => c.hp > 0 && G.cars.includes(c));
+  G.cars = G.cars.filter((c) => !(c.driver === 'police' && c.hp <= 0));
+  // Helicopter at wanted 4-5 with a searchlight cone.
+  if (G.wanted >= 4) {
+    if (!G.heli) G.heli = { x: p.x + 200, y: p.y - 260, angle: 0, t: 0 };
+    const h = G.heli; h.t += dt;
+    const ta = Math.atan2(p.y - h.y, p.x - h.x);
+    h.x += Math.cos(ta) * 130 * dt; h.y += Math.sin(ta) * 130 * dt;
+    h.angle = ta;
+    if (Math.hypot(h.x - p.x, h.y - p.y) < 120 && Math.random() < dt * 0.5) { p.hp -= 5; spawnParticles(p.x, p.y, '#ffdd55', 3, 120, 0.3, 3); }
+  } else G.heli = null;
+  // Wanted decays when hidden and calm.
+  if (G.wantedTimer > 25 && G.police.length === 0) setWanted(G.wanted - 1);
 }
-
-/** Remove all police units (wanted cleared, mission reset, or busted). */
-export function clearPolice() {
-  G.cars = G.cars.filter((c) => c.owner !== 'cop');
-  G.cops = [];
-  G.heli = null;
+export function drawHeli(ctx, cam) {
+  const h = G.heli; if (!h) return;
+  const x = h.x - cam.x, y = h.y - cam.y;
+  // Searchlight cone toward the player.
+  const p = G.player;
+  const px = p.x - cam.x, py = p.y - cam.y;
+  const grad = ctx.createLinearGradient(x, y, px, py);
+  grad.addColorStop(0, 'rgba(255,255,180,0.35)');
+  grad.addColorStop(1, 'rgba(255,255,180,0.05)');
+  ctx.fillStyle = grad;
+  ctx.beginPath(); ctx.moveTo(x, y);
+  const a = Math.atan2(py - y, px - x);
+  ctx.lineTo(px + Math.cos(a + 0.35) * 60, py + Math.sin(a + 0.35) * 60);
+  ctx.lineTo(px + Math.cos(a - 0.35) * 60, py + Math.sin(a - 0.35) * 60);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,200,0.25)'; ctx.beginPath(); ctx.ellipse(px, py, 46, 30, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.save(); ctx.translate(x, y); ctx.rotate(h.angle);
+  ctx.fillStyle = '#2c3e50'; ctx.fillRect(-26, -9, 52, 18);
+  ctx.fillStyle = '#e74c3c'; ctx.fillRect(-26, -9, 10, 18);
+  ctx.fillStyle = '#888'; ctx.fillRect(-6, -30, 4, 60);
+  ctx.restore();
+  ctx.fillStyle = '#ff3333'; ctx.beginPath(); ctx.arc(x + 14, y, 3, 0, Math.PI * 2); ctx.fill();
 }
-
-/** Player gets busted: lose some cash, wanted clears, respawn at the safehouse. */
-export function busted() {
-  const fine = Math.min(G.cash, 200 + G.wanted * 100);
-  G.cash -= fine;
-  G.wanted = 0;
-  clearPolice();
-  G.health = 100;
-  G.mode = 'dead';
-  G.deathReason = 'BUSTED — ditangkap polisi, denda ' + '$' + fine;
+export function bustPlayer() {
+  G.player.hp = 100; G.player.armor = 0;
+  setWanted(0); G.police = []; G.heli = null;
+  G.cash = Math.max(0, G.cash - 200);
+  G.player.x = 1700; G.player.y = 900;
+  G.mode = 'play';
 }

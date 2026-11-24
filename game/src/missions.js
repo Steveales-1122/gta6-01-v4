@@ -1,171 +1,79 @@
-// SUNSET KEYS v4 — mission engine: starts, tracks and completes the 14 story
-// missions, plus race checkpoints, kill counters and objective markers.
-import { G, clamp, toast, banner, addXp, dist2 } from './state.js';
-import { MISSIONS, CHARACTERS, pickEnding } from './story.js';
-import { payPlayer } from './economy.js';
-import { makePed } from './pedestrians.js';
-import { spawnCops } from './police.js';
-import { startTaxiJob } from './sidejobs.js';
+// missions.js — 14 story missions with objectives, markers, timers and payouts.
+import { G, addCash, addXp, addMessage, setWanted } from './state.js';
+import { spawnEnemy } from './combat.js';
+import { captureTurf } from './districts.js';
+import { endingFor, ENDINGS } from './story.js';
+import { completePrep } from './heists.js';
 
-/** Start a mission by index: set objective, spawn its targets, show the banner. */
-export function startMission(idx) {
-  const m = MISSIONS[idx];
-  if (!m) return false;
-  if (G.level < m.level) { toast('Misi ini butuh Level ' + m.level); return false; }
-  // Heist missions run through the planning board (Tab), not as a plain mission.
-  if (m.type === 'heist') {
-    G.heistPlan.heist = m.heist;
-    G.prevMode = G.mode;
-    G.mode = 'heistboard';
-    toast('Buka papan heist — rencanakan ' + m.title);
-    return false;
-  }
-  G.mission = {
-    index: idx, step: 0, active: true, title: m.title, objective: m.brief,
-    target: m.x !== undefined ? { x: m.x, y: m.y } : null, timer: m.type === 'race' ? 150 : 0,
-    data: { kills: 0, need: m.count || 0, checkpoints: [], cpIndex: 0, fares: 0, preps: 0 },
-  };
-  const d = G.mission.data;
-  if (m.type === 'kill' || m.type === 'turf') spawnMissionGang(m);
-  if (m.type === 'vigilante') {
-    for (let i = 0; i < (m.count || 3); i++) {
-      const ped = makePed(G.player.x + (Math.random() - 0.5) * 700, G.player.y + (Math.random() - 0.5) * 600, { state: 'gang', gang: null });
-      ped.hp = 60; ped.robber = true;
-      G.peds.push(ped);
-    }
-  }
-  if (m.type === 'race') {
-    d.checkpoints = [
-      { x: 2340, y: 690 }, { x: 3380, y: 1150 }, { x: 2860, y: 2530 }, { x: 1300, y: 2990 },
-    ];
-    G.mission.target = d.checkpoints[0];
-  }
-  if (m.type === 'taxi') d.fares = 0;
-  banner(m.title, CHARACTERS[m.giver].name + ' — ' + m.brief);
-  toast('Misi dimulai: ' + m.title);
-  return true;
+export const MISSIONS = [
+  { title: '1. First Wheels', objective: 'Steal a car and reach Mara at the Beach Shack', target: { x: 600, y: 1800 }, reward: 300 },
+  { title: '2. The Delivery', objective: 'Drive the package to Downtown Alba', target: { x: 1700, y: 900 }, reward: 500 },
+  { title: '3. Tax Collector', objective: 'Ambush the Vipers tax van in Portside', target: { x: 2800, y: 450 }, reward: 700, enemies: 3, gang: 'Vipers' },
+  { title: '4. Wheels Up', objective: 'Reach Alba International and fly the Duster', target: { x: 1500, y: 1900 }, reward: 800 },
+  { title: '5. Marina Nights', objective: 'Take the speedboat to the Marina Office', target: { x: 2550, y: 1650 }, reward: 900 },
+  { title: '6. Turf: Alba Beach', objective: 'Clear the Kings from Alba Beach', target: { x: 700, y: 1800 }, reward: 1200, enemies: 4, gang: 'Kings', turf: 'beach' },
+  { title: '7. The Getaway', objective: 'Lose a 3-star wanted level, then reach the Hills Villa', target: { x: 600, y: 400 }, reward: 1500, wanted: 3 },
+  { title: '8. Turf: Downtown', objective: 'Defeat the Vipers holding Downtown', target: { x: 1700, y: 1000 }, reward: 2000, enemies: 5, gang: 'Vipers', turf: 'downtown' },
+  { title: '9. Storm Runner', objective: 'Drive the storm shipment to Portside in the rain', target: { x: 2900, y: 350 }, reward: 2200 },
+  { title: '10. Turf: Portside', objective: 'Take Portside from the Vipers', target: { x: 2800, y: 500 }, reward: 2500, enemies: 5, gang: 'Vipers', turf: 'portside' },
+  { title: '11. Turf: North Hills', objective: 'Take North Hills from the Kings', target: { x: 600, y: 500 }, reward: 2800, enemies: 6, gang: 'Kings', turf: 'hills' },
+  { title: '12. Turf: Marina Keys', objective: 'Take Marina Keys from the Marina Boys', target: { x: 2800, y: 1700 }, reward: 3000, enemies: 6, gang: 'Marina Boys', turf: 'marina' },
+  { title: '13. The Board', objective: 'Open the heist board (H) and finish a heist prep', target: { x: 1700, y: 900 }, reward: 1000 },
+  { title: '14. The Last Key', objective: 'Reach the Kasino Alba for the final job', target: { x: 2050, y: 850 }, reward: 5000 },
+];
+
+export function startMission(i) {
+  const m = MISSIONS[i];
+  if (!m) return;
+  G.mission.index = i; G.mission.stage = 0; G.mission.active = true;
+  G.mission.title = m.title; G.mission.objective = m.objective; G.mission.target = m.target;
+  G.objective = m.title + ' — ' + m.objective;
+  addMessage('Mission started: ' + m.title, '#ffd700');
+  if (m.enemies) for (let k = 0; k < m.enemies; k++) spawnEnemy(m.target.x + (Math.random() - 0.5) * 200, m.target.y + (Math.random() - 0.5) * 200, m.gang);
+  if (m.wanted) setWanted(m.wanted);
+  if (m.title.includes('Storm')) G.weather = 'storm';
 }
-
-/** Spawn the gang members a kill/turf mission needs. */
-export function spawnMissionGang(m) {
-  const cx = m.x || 2000, cy = m.y || 2000;
-  const gang = m.type === 'turf' ? (m.district === 'oldtown' ? 'vipers' : 'kings') : 'kings';
-  for (let i = 0; i < (m.count || 4); i++) {
-    const ped = makePed(cx + (Math.random() - 0.5) * 500, cy + (Math.random() - 0.5) * 400, { state: 'gang', gang });
-    ped.hp = 70;
-    G.peds.push(ped);
-  }
-}
-
-/** Per-frame mission logic: objective checks, timers, race checkpoints. */
 export function updateMissions(dt) {
-  const ms = G.mission;
-  if (!ms.active) return;
-  const m = MISSIONS[ms.index];
-  const p = G.player;
-  if (m.type === 'race' && ms.timer > 0) {
-    ms.timer -= dt;
-    if (ms.timer <= 0) { failMission('Waktu habis — balapan gagal'); return; }
-  }
-  const near = (tx, ty, r) => dist2(p.x, p.y, tx, ty) < r * r;
-  switch (m.type) {
-    case 'goto':
-    case 'drive':
-      if (ms.target && near(ms.target.x, ms.target.y, 90)) completeMission();
-      break;
-    case 'race': {
-      const cp = ms.data.checkpoints[ms.data.cpIndex];
-      if (cp && near(cp.x, cp.y, 110)) {
-        ms.data.cpIndex++;
-        addXp(10, 'driving');
-        if (ms.data.cpIndex >= ms.data.checkpoints.length) completeMission();
-        else { G.mission.target = ms.data.checkpoints[ms.data.cpIndex]; toast('Checkpoint ' + ms.data.cpIndex + '/' + ms.data.checkpoints.length); }
-      }
-      break;
+  const m = G.mission;
+  if (!m.active) return;
+  if (m.index === -1) {
+    const p = G.player;
+    if (Math.hypot(p.x - m.target.x, p.y - m.target.y) < 80) {
+      m.active = false;
+      completePrep(m.heistId);
     }
-    case 'kill':
-    case 'turf':
-      if (ms.data.kills >= ms.data.need) {
-        if (m.type === 'turf') {
-          const { takeTurf } = requireTurf();
-          takeTurf(m.district);
-          toast('Wilayah ' + m.district + ' kini milikmu!');
-        }
-        completeMission();
-      }
-      break;
-    case 'taxi':
-      if (ms.data.fares >= 2) completeMission();
-      else if (!G.sideJob) startTaxiJob();
-      break;
-    case 'vigilante':
-      if (ms.data.kills >= ms.data.need) completeMission();
-      break;
-    case 'fly':
-      if (p.plane && p.plane.alt > 150 && near(m.x, m.y, 400)) completeMission();
-      break;
-    case 'heist':
-      // Heist missions complete from heists.js when the crew reaches the vault.
-      break;
+    return;
   }
-  // Objective marker pulse.
-  if (ms.target) ms.target.pulse = (ms.target.pulse || 0) + dt;
+  const def = MISSIONS[m.index];
+  if (!def) return;
+  const p = G.player;
+  const d = Math.hypot(p.x - def.target.x, p.y - def.target.y);
+  if (d < 80) {
+    if (def.enemies && G.enemies.length > 0) { G.objective = def.title + ' — clear the ' + def.gang + ' (' + G.enemies.length + ' left)'; return; }
+    completeMission();
+  }
 }
-
-/** Lazy import to avoid a cycle (turf.js imports missions for its own missions). */
-function requireTurf() {
-  // turf.js is imported by main.js; this indirection keeps the module graph acyclic.
-  return { takeTurf: (id) => { G.turf[id] = 'player'; G.heat = Math.min(100, G.heat + 15); G.stats.turfTaken++; } };
-}
-
-/** Count a mission kill (called from combat when a mission gang member dies). */
-export function missionKill() {
-  const ms = G.mission;
-  if (!ms.active) return;
-  const m = MISSIONS[ms.index];
-  if (m.type === 'kill' || m.type === 'turf' || m.type === 'vigilante') ms.data.kills++;
-}
-
-/** Complete the active mission: pay, XP, advance the story, maybe end the game. */
 export function completeMission() {
-  const ms = G.mission;
-  const m = MISSIONS[ms.index];
-  ms.active = false;
+  const def = MISSIONS[G.mission.index];
+  addCash(def.reward); addXp(250 + G.mission.index * 30);
   G.stats.missionsDone++;
-  payPlayer(m.pay, 'Misi selesai: ' + m.title);
-  addXp(40 + ms.index * 6);
-  banner('MISI SELESAI', m.title + ' — ' + '$' + m.pay);
-  if (m.type === 'heist') G.stats.heistsDone++;
-  if (ms.index >= MISSIONS.length - 1) {
-    const ending = pickEnding();
-    G.story.ending = ending.id;
-    G.mode = 'win';
-    G.winText = ending;
-  } else {
-    G.mission.index = ms.index + 1;
-    G.mission.title = MISSIONS[ms.index + 1].title;
-    toast('Misi berikutnya: ' + MISSIONS[ms.index + 1].title + ' (buka HP — M)');
-  }
-}
-
-/** Fail the active mission: small penalty, mission can be retried from the phone. */
-export function failMission(reason) {
+  G.mission.done.push(def.title);
+  addMessage('Mission complete: ' + def.title + ' +$' + def.reward, '#7fff9e');
+  if (def.turf) { captureTurf(def.turf); addMessage('Turf captured! Income +$150/h', '#ffd700'); }
   G.mission.active = false;
-  banner('MISI GAGAL', reason);
-  toast('Misi gagal — coba lagi dari HP (M)');
+  if (G.mission.index === 13) { finishStory(); return; }
+  if (G.mission.index === 12 && !Object.values(G.heists).some((h) => h.done)) {
+    addMessage('Finish a heist first — open the board with H', '#ffd700');
+    G.mission.active = false; G.mission.index = 12; return;
+  }
+  startMission(G.mission.index + 1);
 }
-
-/** Current objective line for the HUD tracker. */
-export function objectiveText() {
-  const ms = G.mission;
-  if (ms.active) return ms.title + ': ' + ms.objective;
-  const next = MISSIONS[ms.index];
-  return next ? 'Misi berikutnya: ' + next.title + ' (M untuk mulai)' : 'Cerita selesai — bebas berkeliling!';
+export function finishStory() {
+  const owned = Object.values(G.turf).filter((o) => o === 'Player').length;
+  const approach = G.heistBoard.approach;
+  const key = endingFor(approach, owned);
+  G.ending = ENDINGS[key];
+  G.mode = 'win';
+  addMessage('STORY COMPLETE — ' + G.ending.title, '#ffd700');
 }
-
-/** Distance to the current objective marker (for the HUD). */
-export function objectiveDistance() {
-  const ms = G.mission;
-  if (!ms.active || !ms.target) return null;
-  return Math.round(Math.hypot(G.player.x - ms.target.x, G.player.y - ms.target.y));
-}
+export function skipToMission(i) { startMission(i); }

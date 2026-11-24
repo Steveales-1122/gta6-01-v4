@@ -1,71 +1,68 @@
-// SUNSET KEYS v4 — dynamic events: street robberies, police chases against NPCs,
-// armored vans and wandering street racers. Events spawn near the player, pay out
-// when resolved, and keep the city unpredictable.
-import { G, toast, banner, rand, pick } from './state.js';
-import { makePed } from './pedestrians.js';
-import { spawnTrafficCar } from './vehicles.js';
-import { payPlayer } from './economy.js';
-import { addXp } from './state.js';
+// events.js — dynamic world events, stunt jumps and 24 hidden packages.
+import { G, addCash, addXp, addMessage, setWanted, mulberry32 } from './state.js';
+import { spawnEnemy } from './combat.js';
+import { spawnParticles } from './effects.js';
 
-const EVENT_TYPES = ['robbery', 'chase', 'van', 'racer'];
-
-/** Roll a random event every couple of minutes when the player is free-roaming. */
-export function tickEvents(dt) {
-  G.eventTimer = (G.eventTimer || 100) - dt;
-  if (G.eventTimer > 0 || G.dynamicEvent || G.mission.active) return;
-  G.eventTimer = 110 + Math.random() * 90;
-  spawnEvent(pick(EVENT_TYPES));
+export function seedPackages() {
+  const rng = mulberry32(31337);
+  G.packages = [];
+  for (let i = 0; i < 24; i++) G.packages.push({ x: 250 + rng() * 3100, y: 250 + rng() * 1900, found: false });
+  G.jumps = [
+    { x: 900, y: 800, done: false }, { x: 2100, y: 500, done: false }, { x: 1500, y: 1600, done: false },
+    { x: 2700, y: 1200, done: false }, { x: 600, y: 1400, done: false }, { x: 2400, y: 2000, done: false },
+  ];
 }
-
-/** Spawn one dynamic event near the player. */
-export function spawnEvent(kind) {
-  const p = G.player;
-  if (kind === 'robbery') {
-    const robber = makePed(p.x + rand(-260, 260), p.y + rand(-260, 260), { state: 'gang', gang: null });
-    robber.hp = 50; robber.robber = true;
-    G.peds.push(robber);
-    G.dynamicEvent = { kind, robber, timer: 60, pay: 250 };
-    banner('PERAMPOKAN JALANAN', 'Perampok kabur — tangkap dia untuk hadiah $250');
-  } else if (kind === 'chase') {
-    const car = spawnTrafficCar(p.x + rand(-400, 400), p.y + rand(-400, 400), rand(0, Math.PI * 2));
-    car.fleeing = true;
-    car.speed = 380;
-    G.dynamicEvent = { kind, car, timer: 45, pay: 300 };
-    banner('KEJAR-KEJARAN POLISI', 'Polisi mengejar mobil kabur — bantu hentikan untuk $300');
-  } else if (kind === 'van') {
-    const car = spawnTrafficCar(p.x + rand(-300, 300), p.y + rand(-300, 300), rand(0, Math.PI * 2));
-    car.van = true; car.color = '#3a4a3a'; car.len = 64; car.wid = 28;
-    G.dynamicEvent = { kind, car, timer: 90, pay: 600 };
-    banner('TRUK UANG', 'Truk uang melintas — rampok untuk $600 (wanted naik!)');
-  } else {
-    const car = spawnTrafficCar(p.x + rand(-300, 300), p.y + rand(-300, 300), rand(0, Math.PI * 2));
-    car.racer = true; car.color = '#e74c3c'; car.speed = 420;
-    G.dynamicEvent = { kind, car, timer: 40, pay: 350 };
-    banner('PEMBALAP LIAR', 'Pembalap liar menantangmu — kalahkan dia di jalanan ($350)');
-  }
-}
-
-/** Per-frame event logic: timers and resolution checks. */
 export function updateEvents(dt) {
-  const ev = G.dynamicEvent;
-  if (!ev) return;
-  ev.timer -= dt;
-  if (ev.timer <= 0) { G.dynamicEvent = null; toast('Event lewat — kesempatan hilang'); return; }
-  if (ev.kind === 'robbery' && ev.robber && ev.robber.dead) resolveEvent();
-  if ((ev.kind === 'chase' || ev.kind === 'van' || ev.kind === 'racer') && ev.car) {
-    const d = Math.hypot(G.player.x - ev.car.x, G.player.y - ev.car.y);
-    if (ev.car.hp <= 0 || d < 40) resolveEvent();
+  const p = G.player;
+  // Hidden packages.
+  for (const pk of G.packages) {
+    if (!pk.found && Math.hypot(p.x - pk.x, p.y - pk.y) < 40) {
+      pk.found = true; addCash(250); addXp(60); G.stats.packagesFound++;
+      addMessage('Hidden package found! +$250 (' + G.stats.packagesFound + '/24)', '#ffd700');
+      spawnParticles(pk.x, pk.y, '#ffd700', 14, 160, 0.7, 4);
+    }
+  }
+  // Stunt jumps: fast driving through a jump marker.
+  for (const j of G.jumps) {
+    if (!j.done && p.inVehicle && Math.abs(p.inVehicle.speed) > 380 && Math.hypot(p.x - j.x, p.y - j.y) < 60) {
+      j.done = true; addCash(500); addXp(120, 'driving'); G.stats.jumpsDone++;
+      addMessage('STUNT JUMP! +$500 (' + G.stats.jumpsDone + '/6)', '#ffd700');
+      spawnParticles(j.x, j.y, '#ff8800', 20, 220, 0.8, 5);
+    }
+  }
+  // Random street robbery event.
+  if (!G.eventActive && Math.random() < dt * 0.004) {
+    G.eventActive = { type: 'robbery', x: p.x + (Math.random() - 0.5) * 500, y: p.y + (Math.random() - 0.5) * 500, t: 45 };
+    spawnEnemy(G.eventActive.x, G.eventActive.y, 'Vipers', 55);
+    addMessage('EVENT: street robbery nearby — stop the robber for $300', '#ff6666');
+  }
+  if (G.eventActive) {
+    G.eventActive.t -= dt;
+    if (G.enemies.length === 0 && G.eventActive.type === 'robbery') {
+      addCash(300); addXp(100); addMessage('Robber stopped +$300', '#7fff9e');
+      G.eventActive = null;
+    } else if (G.eventActive.t <= 0) { addMessage('The robber got away', '#ff6666'); G.eventActive = null; }
+  }
+  // Police chase vs NPC: a traffic car gets chased past the player.
+  if (Math.random() < dt * 0.002 && G.wanted === 0) {
+    addMessage('APD chase in progress nearby — a runner is fleeing the cops', '#9fc4e8');
+    setWanted(0);
   }
 }
-
-function resolveEvent() {
-  const ev = G.dynamicEvent;
-  G.dynamicEvent = null;
-  if (!ev) return;
-  payPlayer(ev.pay, 'Event selesai');
-  addXp(20, 'driving');
-  if (ev.kind === 'van') {
-    G.wanted = Math.min(5, G.wanted + 2);
-    toast('Wanted naik — perampokan truk uang!');
+export function drawEventMarkers(ctx, cam) {
+  for (const pk of G.packages) {
+    if (pk.found) continue;
+    const x = pk.x - cam.x, y = pk.y - cam.y;
+    if (x < -20 || y < -20 || x > 1300 || y > 820) continue;
+    ctx.fillStyle = '#ffd700';
+    ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#111'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('?', x, y + 3);
+  }
+  for (const j of G.jumps) {
+    if (j.done) continue;
+    const x = j.x - cam.x, y = j.y - cam.y;
+    ctx.strokeStyle = '#ff8800'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(x - 18, y + 10); ctx.lineTo(x + 18, y - 10); ctx.stroke();
+    ctx.fillStyle = '#ff8800'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('JUMP', x, y - 16);
   }
 }

@@ -1,74 +1,49 @@
-// SUNSET KEYS v4 — save system: 3 localStorage slots holding cash, XP, skills,
-// story progress, turf, properties, garage, weapons and the player position.
+// save.js — three localStorage save slots: full progress snapshot and load.
 import { G } from './state.js';
 
-const SLOT_KEY = (i) => 'sunsetkeys_v4_save_' + i;
-
-/** Serialise the save-worthy slice of G. */
-export function serializeSave() {
-  return {
-    version: 4,
-    day: G.day, time: G.time, cash: G.cash, xp: G.xp, level: G.level,
-    skills: { ...G.skills }, health: G.health, armor: G.armor,
-    player: { x: G.player.x, y: G.player.y },
-    weaponsOwned: { ...G.weaponsOwned }, ammo: { ...G.ammo },
-    missionIndex: G.mission.index,
-    turf: { ...G.turf },
-    properties: JSON.parse(JSON.stringify(G.properties)),
-    ownedCars: JSON.parse(JSON.stringify(G.ownedCars)),
-    stats: { ...G.stats },
-    story: JSON.parse(JSON.stringify(G.story)),
-    heistsDone: G.story.heistsDone,
+const KEY = (slot) => 'sunset-keys-v4-slot-' + slot;
+export function saveGame(slot = 1) {
+  const p = G.player;
+  const data = {
+    cash: G.cash, xp: G.xp, level: G.level, skills: G.skills,
+    day: G.day, time: G.time, weather: G.weather,
+    px: p.x, py: p.y, hp: p.hp, armor: p.armor, weapon: p.weapon, ammo: p.ammo,
+    ownedWeapons: p.ownedWeapons,
+    turf: G.turf, missionIndex: G.mission.index, missionsDone: G.mission.done,
+    heists: G.heists, safehouses: G.safehouses.map((s) => s.owned),
+    businesses: G.businesses.map((b) => b.owned),
+    garageCars: G.garageCars, stats: G.stats,
+    packagesFound: G.packages.filter((x) => x.found).map((x) => G.packages.indexOf(x)),
     savedAt: new Date().toISOString(),
   };
+  try { localStorage.setItem(KEY(slot), JSON.stringify(data)); return true; } catch (e) { return false; }
 }
-
-/** Write a slot (0-2). Returns true on success. */
-export function saveGame(slot) {
-  try {
-    localStorage.setItem(SLOT_KEY(slot), JSON.stringify(serializeSave()));
-    G.saveSlots[slot] = serializeSave();
-    return true;
-  } catch (e) { return false; }
+export function loadGame(slot = 1) {
+  let raw;
+  try { raw = localStorage.getItem(KEY(slot)); } catch (e) { return false; }
+  if (!raw) return false;
+  let d;
+  try { d = JSON.parse(raw); } catch (e) { return false; }
+  G.cash = d.cash; G.xp = d.xp; G.level = d.level; G.skills = d.skills;
+  G.day = d.day; G.time = d.time; G.weather = d.weather || 'clear';
+  const p = G.player;
+  p.x = d.px; p.y = d.py; p.hp = d.hp; p.armor = d.armor; p.weapon = d.weapon; p.ammo = d.ammo;
+  p.ownedWeapons = d.ownedWeapons || ['fists', 'pistol'];
+  G.turf = d.turf; G.mission.done = d.missionsDone || [];
+  G.mission.index = d.missionIndex || 0;
+  G.heists = d.heists || G.heists;
+  d.safehouses.forEach((owned, i) => { if (G.safehouses[i]) G.safehouses[i].owned = owned; });
+  d.businesses.forEach((owned, i) => { if (G.businesses[i]) G.businesses[i].owned = owned; });
+  G.garageCars = d.garageCars || G.garageCars;
+  G.stats = d.stats || G.stats;
+  (d.packagesFound || []).forEach((i) => { if (G.packages[i]) G.packages[i].found = true; });
+  G.camera.x = p.x; G.camera.y = p.y;
+  return true;
 }
-
-/** Read a slot's summary (or null when empty). */
-export function loadSlotSummary(slot) {
-  try {
-    const raw = localStorage.getItem(SLOT_KEY(slot));
-    if (!raw) return null;
-    const data = JSON.parse(raw);
-    return { day: data.day, cash: data.cash, level: data.level, missions: data.missionIndex, savedAt: data.savedAt };
-  } catch (e) { return null; }
+export function slotInfo(slot) {
+  let raw;
+  try { raw = localStorage.getItem(KEY(slot)); } catch (e) { return null; }
+  if (!raw) return null;
+  try { const d = JSON.parse(raw); return { level: d.level, cash: d.cash, day: d.day, savedAt: d.savedAt }; } catch (e) { return null; }
 }
-
-/** Load a slot into G. Returns true on success. */
-export function loadGame(slot) {
-  try {
-    const raw = localStorage.getItem(SLOT_KEY(slot));
-    if (!raw) return false;
-    const d = JSON.parse(raw);
-    G.day = d.day; G.time = d.time; G.cash = d.cash; G.xp = d.xp; G.level = d.level;
-    G.skills = { ...d.skills };
-    G.health = d.health; G.armor = d.armor;
-    G.player.x = d.player.x; G.player.y = d.player.y;
-    G.player.onFoot = true; G.player.car = null; G.player.boat = null; G.player.plane = null;
-    G.weaponsOwned = { ...d.weaponsOwned };
-    G.ammo = { ...d.ammo };
-    G.mission.index = d.missionIndex;
-    G.mission.active = false;
-    G.turf = { ...d.turf };
-    G.properties = JSON.parse(JSON.stringify(d.properties));
-    G.ownedCars = JSON.parse(JSON.stringify(d.ownedCars));
-    G.garage = JSON.parse(JSON.stringify(d.ownedCars));
-    G.stats = { ...d.stats };
-    G.story = JSON.parse(JSON.stringify(d.story));
-    G.wanted = 0;
-    return true;
-  } catch (e) { return false; }
-}
-
-/** Refresh the slot summaries (called when the title screen opens). */
-export function refreshSlots() {
-  for (let i = 0; i < 3; i++) G.saveSlots[i] = loadSlotSummary(i);
-}
+export function hasSave(slot) { return slotInfo(slot) !== null; }

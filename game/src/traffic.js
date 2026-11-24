@@ -1,35 +1,38 @@
-// SUNSET KEYS v4 — traffic: ambient cars that cruise the road grid, stop at the
-// player, honk, and panic-scatter when shots are fired nearby.
-import { G, rand, clamp } from './state.js';
-import { onRoad, nearestRoadPoint } from './city.js';
-import { spawnTrafficCar, makeCar } from './vehicles.js';
-import { trafficDensity } from './daynight.js';
+// traffic.js — ambient traffic cars cruising the road grid.
+import { G, mulberry32, pick, clamp } from './state.js';
 
-/** Keep the road network populated near the camera; despawn far cars. */
+const COLORS = ['#95a5a6', '#34495e', '#c0392b', '#27ae60', '#d35400', '#8e44ad', '#16a085'];
+export function seedTraffic() {
+  const rng = mulberry32(99);
+  for (let i = 0; i < 22; i++) {
+    const vertical = rng() < 0.5;
+    const road = vertical ? 200 + Math.floor(rng() * 12) * 300 : 200 + Math.floor(rng() * 8) * 300;
+    G.traffic.push({
+      x: vertical ? road : 200 + rng() * 3200,
+      y: vertical ? 200 + rng() * 2000 : road,
+      angle: vertical ? (rng() < 0.5 ? Math.PI / 2 : -Math.PI / 2) : (rng() < 0.5 ? 0 : Math.PI),
+      speed: 90 + rng() * 60, color: pick(rng, COLORS), vertical,
+    });
+  }
+}
 export function updateTraffic(dt) {
-  const target = Math.floor(14 * trafficDensity());
-  // Despawn cars far from the camera.
-  for (let i = G.cars.length - 1; i >= 0; i--) {
-    const c = G.cars[i];
-    if (c.owner !== 'npc') continue;
-    const d = (c.x - G.camera.x) ** 2 + (c.y - G.camera.y) ** 2;
-    if (d > 1600 * 1600) G.cars.splice(i, 1);
-  }
-  const npcCount = G.cars.filter((c) => c.owner === 'npc').length;
-  if (npcCount < target && Math.random() < dt * 3) {
-    const pt = nearestRoadPoint(G.camera.x + rand(-900, 900), G.camera.y + rand(-700, 700));
-    if (pt) {
-      const car = spawnTrafficCar(pt.x, pt.y, pt.angle);
-      car.dir = Math.random() < 0.5 ? pt.angle : pt.angle + Math.PI;
-      car.angle = car.dir;
+  const p = G.player;
+  for (const t of G.traffic) {
+    t.x += Math.cos(t.angle) * t.speed * dt;
+    t.y += Math.sin(t.angle) * t.speed * dt;
+    if (t.x < 120 || t.x > 3480 || t.y < 120 || t.y > 2280) {
+      t.x = 200 + Math.random() * 3200; t.y = 200 + Math.random() * 2000;
+      t.angle = t.vertical ? (Math.random() < 0.5 ? Math.PI / 2 : -Math.PI / 2) : (Math.random() < 0.5 ? 0 : Math.PI);
     }
+    // Bump the player if it runs into them on foot.
+    if (!p.inVehicle && Math.hypot(t.x - p.x, t.y - p.y) < 26) { p.hp -= 12 * dt * 10; }
   }
-  // Panic: NPC cars near fresh gunfire swerve away.
-  if (G.bullets.length > 0) {
-    for (const c of G.cars) {
-      if (c.owner !== 'npc') continue;
-      const d = (c.x - G.player.x) ** 2 + (c.y - G.player.y) ** 2;
-      if (d < 300 * 300) c.speed = clamp(c.speed + 120 * dt, 0, 320);
-    }
-  }
+}
+export function drawTrafficCar(ctx, cam, t) {
+  const x = t.x - cam.x, y = t.y - cam.y;
+  ctx.save(); ctx.translate(x, y); ctx.rotate(t.angle);
+  ctx.fillStyle = '#111'; ctx.fillRect(-22, -12, 44, 24);
+  ctx.fillStyle = t.color; ctx.fillRect(-20, -10, 40, 20);
+  ctx.fillStyle = '#9fd8ff'; ctx.fillRect(-5, -8, 11, 16);
+  ctx.restore();
 }

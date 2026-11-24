@@ -1,107 +1,39 @@
-// SUNSET KEYS v4 — pedestrians: sidewalk walkers, shoppers, joggers and panickers.
-// Peds wander the sidewalks, flee gunfire, hail taxis, and some become taxi fares
-// or vigilante targets; a few are gang members who fight back.
-import { G, rand, pick, clamp, angleTo, dist2 } from './state.js';
+// pedestrians.js — city walkers with simple sidewalk wandering and panic.
+import { G, mulberry32, pick, clamp } from './state.js';
+import { nearestRoadPoint } from './city.js';
 
-const PED_COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#e67e22', '#ecf0f1', '#fd79a8', '#00cec9'];
-const PED_NAMES = ['Mara', 'Dino', 'Lena', 'Rico', 'Sofia', 'Bruno', 'Nadia', 'Tomas', 'Iris', 'Felix', 'Cleo', 'Hugo'];
-
-/** Spawn peds around the camera so the streets always feel alive. */
-export function spawnPeds(count) {
-  for (let i = 0; i < count; i++) {
-    const x = clamp(G.camera.x + rand(-700, 700), 40, 5160);
-    const y = clamp(G.camera.y + rand(-500, 500), 40, 3760);
-    G.peds.push(makePed(x, y));
+const SHIRTS = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#ecf0f1', '#e67e22'];
+export function seedPeds() {
+  const rng = mulberry32(4242);
+  for (let i = 0; i < 46; i++) {
+    const x = 300 + rng() * 3000, y = 300 + rng() * 1800;
+    const rp = nearestRoadPoint(x, y) || { x, y };
+    G.peds.push({ x: rp.x + (rng() - 0.5) * 30, y: rp.y + (rng() - 0.5) * 30, angle: rng() * Math.PI * 2, speed: 28 + rng() * 26, shirt: pick(rng, SHIRTS), panic: 0, tx: rp.x, ty: rp.y, wait: 0 });
   }
 }
-
-export function makePed(x, y, opts) {
-  const o = opts || {};
-  return {
-    x, y, angle: rand(0, Math.PI * 2), speed: rand(28, 55),
-    color: pick(PED_COLORS), name: pick(PED_NAMES),
-    hp: 100, state: o.state || 'walk', // walk | flee | fare | gang | down
-    gang: o.gang || null, target: null, t: rand(0, 4),
-    size: 9, dead: false,
-  };
-}
-
-/** Ped AI: walk, panic-flee from gunfire, gang members hold turf and shoot back. */
 export function updatePeds(dt) {
   const p = G.player;
-  for (let i = G.peds.length - 1; i >= 0; i--) {
-    const ped = G.peds[i];
-    if (ped.dead) { ped.t -= dt; if (ped.t <= 0) G.peds.splice(i, 1); continue; }
-    ped.t -= dt;
-    const dPlayer = dist2(ped.x, ped.y, p.x, p.y);
-    const gunfireNear = G.bullets.length > 0 && dPlayer < 500 * 500;
-    if (ped.state === 'walk') {
-      if (gunfireNear && dPlayer < 420 * 420) { ped.state = 'flee'; ped.t = 3; }
-      else if (ped.t <= 0) { ped.angle = rand(0, Math.PI * 2); ped.t = rand(2, 6); }
-      ped.x += Math.cos(ped.angle) * ped.speed * dt;
-      ped.y += Math.sin(ped.angle) * ped.speed * dt;
-    } else if (ped.state === 'flee') {
-      const away = angleTo(p.x, p.y, ped.x, ped.y);
-      ped.x += Math.cos(away) * 120 * dt;
-      ped.y += Math.sin(away) * 120 * dt;
-      if (ped.t <= 0) ped.state = 'walk';
-    } else if (ped.state === 'gang') {
-      // Gang member: stand ground, shoot the player when close and wanted.
-      if (dPlayer < 380 * 380 && G.wanted > 0) {
-        ped.angle = angleTo(ped.x, ped.y, p.x, p.y);
-        if (Math.random() < dt * 0.7) {
-          G.bullets.push({ x: ped.x, y: ped.y, angle: ped.angle + rand(-0.12, 0.12), speed: 520, dmg: 6, from: 'gang', t: 1.2 });
-        }
-      } else if (ped.t <= 0) {
-        ped.angle = rand(0, Math.PI * 2); ped.t = rand(3, 7);
-        ped.x += Math.cos(ped.angle) * ped.speed * 0.5 * dt;
-        ped.y += Math.sin(ped.angle) * ped.speed * 0.5 * dt;
-      }
-    } else if (ped.state === 'fare') {
-      // Waiting for a taxi: wave when the player's taxi is near.
-      ped.angle = Math.sin(G.frame * 0.004) * 0.6;
-    }
-    ped.x = clamp(ped.x, 30, 5170);
-    ped.y = clamp(ped.y, 30, 3770);
-    // Keep peds off the water and out of buildings.
-    if (ped.x < 300 && ped.y > 0) ped.x = 300;
-  }
-  // Top up the crowd near the camera.
-  if (G.peds.length < 26 && Math.random() < dt * 2) spawnPeds(1);
-}
-
-/** Draw peds as small top-down figures with a shadow and a coloured shirt. */
-export function drawPeds(ctx, cam) {
   for (const ped of G.peds) {
-    const x = ped.x - cam.x, y = ped.y - cam.y;
-    if (x < -30 || x > 1330 || y < -30 || y > 830) continue;
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
-    ctx.beginPath(); ctx.ellipse(x + 2, y + 3, 8, 5, 0, 0, Math.PI * 2); ctx.fill();
-    if (ped.dead) {
-      ctx.fillStyle = '#5a3a3a';
-      ctx.beginPath(); ctx.ellipse(x, y, 10, 5, ped.angle, 0, Math.PI * 2); ctx.fill();
+    const d = Math.hypot(ped.x - p.x, ped.y - p.y);
+    if (d < 160 && (G.wanted > 0 || G.bullets.length > 0)) ped.panic = 3;
+    if (ped.panic > 0) { ped.panic -= dt; ped.speed = 130; } else ped.speed = 34;
+    if (ped.wait > 0) { ped.wait -= dt; continue; }
+    const dx = ped.tx - ped.x, dy = ped.ty - ped.y, dd = Math.hypot(dx, dy);
+    if (dd < 12) {
+      const rp = nearestRoadPoint(ped.x + (Math.random() - 0.5) * 500, ped.y + (Math.random() - 0.5) * 500);
+      if (rp) { ped.tx = rp.x; ped.ty = rp.y; }
+      ped.wait = 0.5 + Math.random() * 2;
       continue;
     }
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(ped.angle);
-    ctx.fillStyle = ped.color;
-    ctx.beginPath(); ctx.arc(0, 0, ped.size, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#f1c27d';
-    ctx.beginPath(); ctx.arc(3, 0, 4.5, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#222222';
-    ctx.fillRect(-ped.size - 2, -3, 4, 6);
-    ctx.fillRect(-ped.size - 2, -3, 4, 6);
-    ctx.restore();
-    if (ped.gang) {
-      ctx.fillStyle = ped.gang === 'vipers' ? '#e5484d' : ped.gang === 'kings' ? '#f5a623' : '#2ea8d8';
-      ctx.font = 'bold 10px sans-serif';
-      ctx.fillText('◆', x - 4, y - 14);
-    }
-    if (ped.state === 'fare') {
-      ctx.fillStyle = '#ffd34d';
-      ctx.font = 'bold 12px sans-serif';
-      ctx.fillText('!', x - 3, y - 14);
-    }
+    ped.angle = Math.atan2(dy, dx);
+    ped.x += Math.cos(ped.angle) * ped.speed * dt;
+    ped.y += Math.sin(ped.angle) * ped.speed * dt;
+    ped.x = clamp(ped.x, 100, 3500); ped.y = clamp(ped.y, 100, 2300);
   }
+}
+export function drawPed(ctx, cam, ped) {
+  const x = ped.x - cam.x, y = ped.y - cam.y;
+  ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(x, y - 6, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = ped.shirt; ctx.fillRect(x - 5, y - 5, 10, 12);
+  ctx.fillStyle = '#2c3e50'; ctx.fillRect(x - 4, y + 7, 3, 8); ctx.fillRect(x + 1, y + 7, 3, 8);
 }

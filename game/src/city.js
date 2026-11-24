@@ -1,163 +1,78 @@
-// SUNSET KEYS v4 — city generation: roads, blocks, buildings, props, marina and airport.
-// Port Alba is a 5200x3800 hand-laid grid city with six districts, generated once per
-// load from a fixed seed so every run (and every screenshot) sees the same streets.
-import { G, WORLD_W, WORLD_H, mulberry32, randInt, pick } from './state.js';
+// city.js — procedural city layout: roads, building blocks, parks, beach, airport runway.
+import { G, WORLD_W, WORLD_H, mulberry32, pick } from './state.js';
 
-export const DISTRICTS = [
-  { id: 'downtown', name: 'Downtown', x: 1560, y: 0, w: 1560, h: 1400, color: '#3b4a6b', crew: 'none', income: 0 },
-  { id: 'heights', name: 'Alba Heights', x: 3120, y: 0, w: 1040, h: 1400, color: '#5d6b4a', crew: 'kings', income: 120 },
-  { id: 'airport', name: 'Alba International', x: 4160, y: 0, w: 1040, h: 1400, color: '#4a5568', crew: 'none', income: 0 },
-  { id: 'marina', name: 'Marina Bay', x: 0, y: 0, w: 1560, h: 1400, color: '#2e5a74', crew: 'marina', income: 90 },
-  { id: 'oldtown', name: 'Old Town', x: 0, y: 1400, w: 2080, h: 2400, color: '#6b5a3b', crew: 'vipers', income: 150 },
-  { id: 'industrial', name: 'South Industrial', x: 2080, y: 1400, w: 3120, h: 2400, color: '#54423a', crew: 'kings', income: 110 },
-];
-
-export const CREWS = {
-  vipers: { name: 'Vipers', color: '#e5484d', home: 'oldtown' },
-  kings: { name: 'Kings', color: '#f5a623', home: 'industrial' },
-  marina: { name: 'Marina Boys', color: '#2ea8d8', home: 'marina' },
-  none: { name: 'Neutral', color: '#9aa0a6', home: null },
-};
-
-/** Road centrelines: verticals every 520px, horizontals every 460px. */
-export function buildRoads() {
-  const verticals = [];
-  for (let x = 260; x < WORLD_W; x += 520) verticals.push(x);
-  const horizontals = [];
-  for (let y = 230; y < WORLD_H; y += 460) horizontals.push(y);
-  return { verticals, horizontals, width: 64 };
-}
-
-/** A building rect with a roof colour, height (for shadow length) and kind. */
-function makeBuilding(rng, x, y, w, h, district) {
-  const kinds = district === 'downtown' ? ['tower', 'tower', 'office'] : district === 'industrial' ? ['warehouse', 'factory'] : district === 'heights' ? ['house', 'villa'] : ['shop', 'house', 'apartment'];
-  const kind = kinds[Math.floor(rng() * kinds.length)];
-  const roofs = {
-    tower: ['#4a5a78', '#5b6b8c', '#3d4c66'], office: ['#6b7a99', '#55627f'],
-    house: ['#a8603c', '#7a5a3a', '#8c4a3a'], villa: ['#b07848', '#96683f'],
-    shop: ['#8c6a4a', '#75543a', '#9c7a55'], apartment: ['#6b5a72', '#7a6a80'],
-    warehouse: ['#7a6a55', '#6b5f4a'], factory: ['#5f5a55', '#6b655f'],
-  };
-  const palette = roofs[kind] || ['#666666'];
-  return {
-    x, y, w, h, kind, district: district.id,
-    roof: palette[Math.floor(rng() * palette.length)],
-    height: kind === 'tower' ? randInt(26, 60) : kind === 'office' ? randInt(14, 26) : randInt(6, 14),
-    windows: Math.floor(rng() * 3),
-  };
-}
-
-/** Build the whole city once and stash it on G.city. */
 export function buildCity() {
   const rng = mulberry32(20261124);
-  const roads = buildRoads();
-  const buildings = [];
-  const trees = [];
-  const lamps = [];
-  const props = [];
-  // Water: a bay along the whole west edge plus a marina basin.
-  const water = { x: 0, y: 0, w: 300, h: WORLD_H, basin: { x: 180, y: 1500, w: 620, h: 900 } };
-  // Airport: runways on the east edge, inside the airport district.
-  const airport = {
-    x: 4240, y: 120, w: 880, h: 1180,
-    runway: { x: 4380, y: 300, w: 90, h: 900 },
-    runway2: { x: 4700, y: 300, w: 90, h: 900 },
-    terminal: { x: 4240, y: 620, w: 120, h: 260 },
-    tower: { x: 4300, y: 220, w: 60, h: 60 },
-  };
-  // Buildings: fill each block between roads, skipping water, airport and parks.
-  for (let bx = 0; bx < 10; bx++) {
-    for (let by = 0; by < 8; by++) {
-      const x0 = 300 + bx * 520, y0 = 260 + by * 460;
-      const x1 = x0 + 440, y1 = y0 + 380;
-      const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-      if (cx < 340 || cy < 40) continue; // in the bay
-      if (cx > 4200 && cy < 1420) continue; // airport grounds
-      if ((bx === 4 && by === 3) || (bx === 7 && by === 6)) { // two parks
-        for (let i = 0; i < 9; i++) trees.push({ x: x0 + rng() * 440, y: y0 + rng() * 380, r: 10 + rng() * 8 });
-        props.push({ kind: 'fountain', x: cx, y: cy, r: 26 });
+  G.roads = [];
+  // Road grid every 300px, with a diagonal avenue through downtown.
+  for (let x = 200; x <= WORLD_W - 200; x += 300) G.roads.push({ x1: x, y1: 100, x2: x, y2: WORLD_H - 100, w: 26, vertical: true });
+  for (let y = 200; y <= WORLD_H - 200; y += 300) G.roads.push({ x1: 100, y1: y, x2: WORLD_W - 100, y2: y, w: 26, vertical: false });
+  G.roads.push({ x1: 300, y1: 300, x2: 3300, y2: 2100, w: 30, vertical: false, diagonal: true });
+
+  const palette = ['#5d6d8c', '#6b5d8c', '#8c6b5d', '#4f7a6a', '#7a6a4f', '#546a7a', '#8c5d6b', '#5d8c6b'];
+  G.buildings = [];
+  for (let bx = 260; bx < WORLD_W - 260; bx += 300) {
+    for (let by = 260; by < WORLD_H - 260; by += 300) {
+      // Skip airport runway strip and beach water edge.
+      if (bx > 1250 && bx < 2350 && by > 1650 && by < 1950) continue;
+      if (bx < 500 && by > 1900) continue;
+      if (rng() < 0.18) { // park block
+        for (let i = 0; i < 5; i++) G.trees.push({ x: bx + 30 + rng() * 180, y: by + 30 + rng() * 180, r: 10 + rng() * 8 });
         continue;
       }
-      const d = DISTRICTS.find((dd) => cx >= dd.x && cx < dd.x + dd.w && cy >= dd.y && cy < dd.y + dd.h) || DISTRICTS[0];
-      const n = d.id === 'downtown' ? 2 : 3;
+      const n = 1 + Math.floor(rng() * 2);
       for (let i = 0; i < n; i++) {
-        const bw = 90 + rng() * 120, bh = 80 + rng() * 110;
-        const bx2 = x0 + 20 + rng() * Math.max(1, 400 - bw);
-        const by2 = y0 + 20 + rng() * Math.max(1, 340 - bh);
-        buildings.push(makeBuilding(rng, bx2, by2, bw, bh, d));
+        const w = 70 + rng() * 110, h = 70 + rng() * 110;
+        G.buildings.push({
+          x: bx + 20 + rng() * (220 - w), y: by + 20 + rng() * (220 - h),
+          w, h, color: pick(rng, palette), floors: 1 + Math.floor(rng() * 14),
+          roof: pick(rng, ['#333a45', '#3a3335', '#2e3a33']),
+        });
       }
-      if (rng() < 0.7) trees.push({ x: x0 + rng() * 440, y: y0 + rng() * 380, r: 9 + rng() * 7 });
     }
   }
-  // Street lamps along every road intersection.
-  for (const x of roads.verticals) for (const y of roads.horizontals) lamps.push({ x: x + 40, y: y + 40 });
-  // Docks + piers in the marina basin.
-  const docks = [
-    { x: 300, y: 1560, w: 220, h: 26 }, { x: 300, y: 1780, w: 220, h: 26 },
-    { x: 300, y: 2000, w: 220, h: 26 }, { x: 300, y: 2220, w: 220, h: 26 },
-  ];
-  // Stunt jump ramps scattered around the city.
-  const stunts = [
-    { x: 1820, y: 920, angle: 0 }, { x: 3640, y: 2380, angle: Math.PI / 2 },
-    { x: 1300, y: 3220, angle: Math.PI }, { x: 4420, y: 1840, angle: -Math.PI / 2 },
-  ];
-  // Hidden packages (collectibles) tucked in alleys and rooftops.
-  const collectibles = [];
-  for (let i = 0; i < 24; i++) {
-    collectibles.push({ x: 400 + rng() * (WORLD_W - 800), y: 300 + rng() * (WORLD_H - 600), found: false, id: i });
-  }
-  G.city = { roads, buildings, trees, lamps, props, water, airport, docks, stunts, collectibles };
-  // Turf ownership starts from district crews.
-  for (const d of DISTRICTS) G.turf[d.id] = d.crew;
-  return G.city;
+  // Landmarks: casino, port cranes, airport terminal, marina pier.
+  G.buildings.push({ x: 2050, y: 850, w: 220, h: 140, color: '#b8860b', floors: 18, roof: '#222', landmark: 'Kasino Alba' });
+  G.buildings.push({ x: 2900, y: 350, w: 260, h: 120, color: '#7a3a3a', floors: 6, roof: '#333', landmark: 'Portside Terminal' });
+  G.buildings.push({ x: 1500, y: 1750, w: 300, h: 90, color: '#4a5a7a', floors: 4, roof: '#222', landmark: 'Alba International' });
+  G.buildings.push({ x: 600, y: 1800, w: 120, h: 80, color: '#c98a4b', floors: 2, roof: '#8a5a2b', landmark: 'Beach Shack' });
+  G.buildings.push({ x: 1650, y: 850, w: 150, h: 100, color: '#3a6b4f', floors: 8, roof: '#222', landmark: 'Sunset Auto Works' });
+  G.buildings.push({ x: 2550, y: 1650, w: 130, h: 90, color: '#2e6f7a', floors: 3, roof: '#123', landmark: 'Marina Office' });
 }
 
-/** Which district contains a world point (null outside). */
-export function districtAt(x, y) {
-  return DISTRICTS.find((d) => x >= d.x && x < d.x + d.w && y >= d.y && y < d.y + d.h) || null;
-}
-
-/** True when a point is on a road (drivable asphalt). */
-export function onRoad(x, y) {
-  const c = G.city;
-  if (!c) return false;
-  const w = c.roads.width / 2 + 6;
-  if (c.roads.verticals.some((rx) => Math.abs(x - rx) < w)) return true;
-  if (c.roads.horizontals.some((ry) => Math.abs(y - ry) < w)) return true;
-  if (x > c.airport.runway.x - 50 && x < c.airport.runway.x + 140 && y > 260 && y < 1240) return true;
-  if (x > c.airport.runway2.x - 50 && x < c.airport.runway2.x + 140 && y > 260 && y < 1240) return true;
-  return false;
-}
-
-/** True when a point is in the bay or the marina basin (boats only). */
-export function inWater(x, y) {
-  const c = G.city;
-  if (!c) return false;
-  if (x < c.water.w && y > 0) return true;
-  const b = c.water.basin;
-  return x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h;
-}
-
-/** True when a point overlaps any building rect (with a small margin). */
-export function hitsBuilding(x, y, margin) {
-  const m = margin || 0;
-  for (const b of G.city.buildings) {
-    if (x > b.x - m && x < b.x + b.w + m && y > b.y - m && y < b.y + b.h + m) return b;
+export function collideBuildings(x, y, r) {
+  for (const b of G.buildings) {
+    if (x + r > b.x && x - r < b.x + b.w && y + r > b.y && y - r < b.y + b.h) {
+      const dxl = x + r - b.x, dxr = b.x + b.w - (x - r);
+      const dyt = y + r - b.y, dyb = b.y + b.h - (y - r);
+      const m = Math.min(dxl, dxr, dyt, dyb);
+      if (m === dxl) return { x: b.x - r, y };
+      if (m === dxr) return { x: b.x + b.w + r, y };
+      if (m === dyt) return { x, y: b.y - r };
+      return { x, y: b.y + b.h + r };
+    }
   }
   return null;
 }
 
-/** Nearest road centreline point to (x, y) — used to snap traffic spawns. */
-export function nearestRoadPoint(x, y) {
-  const c = G.city;
-  let best = null, bestD = Infinity;
-  for (const rx of c.roads.verticals) {
-    const d = Math.abs(x - rx);
-    if (d < bestD) { bestD = d; best = { x: rx, y, angle: y > 0 ? Math.PI / 2 : -Math.PI / 2 }; }
+export function onRoad(x, y) {
+  for (const r of G.roads) {
+    if (r.vertical) { if (Math.abs(x - r.x1) < r.w) return true; }
+    else if (r.diagonal) { const t = (x - r.x1) / (r.x2 - r.x1); const ry = r.y1 + t * (r.y2 - r.y1); if (Math.abs(y - ry) < r.w) return true; }
+    else if (Math.abs(y - r.y1) < r.w) return true;
   }
-  for (const ry of c.roads.horizontals) {
-    const d = Math.abs(y - ry);
-    if (d < bestD) { bestD = d; best = { x, y: ry, angle: 0 }; }
+  return false;
+}
+
+export function nearestRoadPoint(x, y) {
+  let best = null, bd = 1e9;
+  for (const r of G.roads) {
+    let px, py;
+    if (r.vertical) { px = r.x1; py = Math.max(r.y1, Math.min(r.y2, y)); }
+    else if (r.diagonal) { const t = Math.max(0, Math.min(1, (x - r.x1) / (r.x2 - r.x1))); px = r.x1 + t * (r.x2 - r.x1); py = r.y1 + t * (r.y2 - r.y1); }
+    else { px = Math.max(r.x1, Math.min(r.x2, x)); py = r.y1; }
+    const d = Math.hypot(px - x, py - y);
+    if (d < bd) { bd = d; best = { x: px, y: py }; }
   }
   return best;
 }

@@ -1,62 +1,43 @@
-// SUNSET KEYS v4 — day/night cycle: sun position, sky tint, streetlights and neon.
-// One game hour lasts ~50 real seconds; the cycle drives lighting, traffic density
-// and which side jobs and events can appear.
-import { G, clamp, lerp } from './state.js';
+// daynight.js — full day/night cycle: sky tint, sun/moon, streetlights at night.
+import { G } from './state.js';
 
-export const HOUR_SECONDS = 50;
-
-/** Advance the clock; returns true when a new game hour begins. */
-export function tickClock(dt) {
-  const before = Math.floor(G.time);
-  G.time += dt / HOUR_SECONDS;
-  if (G.time >= 24) { G.time -= 24; G.day++; }
-  return Math.floor(G.time) !== before;
+export function advanceClock(dt) {
+  G.time += dt * 2.2; // 1 real second ≈ 2.2 game minutes
+  if (G.time >= 1440) { G.time -= 1440; G.day++; }
 }
-
-/** 0 = deep night, 1 = full day. Smooth around dawn (6h) and dusk (19h). */
-export function daylight() {
-  const t = G.time;
-  if (t < 5 || t >= 20) return 0;
-  if (t < 7) return (t - 5) / 2;
-  if (t < 17) return 1;
-  if (t < 20) return 1 - (t - 17) / 3;
-  return 1;
-}
-
-/** Golden-hour factor: strong near 17.5-18.5h, the sunset look of the cover shot. */
-export function sunsetFactor() {
-  const d = Math.abs(G.time - 18.1);
-  return clamp(1 - d / 2.2, 0, 1);
-}
-
-/** Sky tint colour for the current time, as [r,g,b] for the lighting overlay. */
-export function skyTint() {
-  const dl = daylight();
-  const ss = sunsetFactor();
-  if (ss > 0.35 && dl < 0.9) {
-    // Orange-pink sunset wash.
-    return [lerp(255, 90, dl * 0.4), lerp(120, 60, dl * 0.4), lerp(60, 110, dl * 0.4)];
-  }
-  if (dl > 0.8) return [135, 190, 235]; // bright midday blue
-  if (dl > 0.3) return [180, 170, 150]; // dawn/dusk haze
-  return [14, 20, 44]; // night navy
-}
-
-/** Clock as HH:MM for the HUD. */
+export function hourOf() { return Math.floor(G.time / 60); }
+export function minuteOf() { return Math.floor(G.time % 60); }
 export function clockText() {
-  const h = Math.floor(G.time);
-  const m = Math.floor((G.time - h) * 60);
+  const h = hourOf(), m = minuteOf();
   return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
 }
-
-/** Is it dark enough for headlights, neon signs and the night radio? */
-export function isNight() { return daylight() < 0.35; }
-
-/** Traffic density multiplier: rush hour morning and evening, quiet at 3am. */
-export function trafficDensity() {
-  const t = G.time;
-  if (t >= 7 && t <= 9) return 1.4;
-  if (t >= 17 && t <= 19) return 1.5;
-  if (t >= 2 && t <= 5) return 0.35;
-  return 1;
+export function isNight() { const h = hourOf(); return h < 6 || h >= 19; }
+export function isSunset() { const h = hourOf(); return h >= 17 && h < 19; }
+export function skyColor() {
+  const h = hourOf() + minuteOf() / 60;
+  if (h >= 6 && h < 10) return '#f7c873'; // morning gold
+  if (h >= 10 && h < 16) return '#87b5d6'; // midday blue
+  if (h >= 16 && h < 19) return '#ff8c42'; // sunset orange
+  if (h >= 19 && h < 21) return '#6b4a7a'; // dusk purple
+  return '#0d1526'; // night
+}
+export function ambientLight() {
+  const h = hourOf();
+  if (h >= 8 && h < 17) return 1;
+  if (h >= 6 && h < 8) return 0.85;
+  if (h >= 17 && h < 19) return 0.8;
+  if (h >= 19 && h < 21) return 0.55;
+  return 0.42;
+}
+export function drawSkyOverlay(ctx, w, h) {
+  const light = ambientLight();
+  if (light >= 1) return;
+  ctx.fillStyle = 'rgba(8,12,30,' + (1 - light) * 0.55 + ')';
+  ctx.fillRect(0, 0, w, h);
+  // Sun or moon disc.
+  const sx = w - 430, sy = 70;
+  ctx.fillStyle = isNight() ? '#e8e8d8' : '#ffdf6b';
+  ctx.beginPath(); ctx.arc(sx, sy, isNight() ? 22 : 30, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.25)';
+  ctx.beginPath(); ctx.arc(sx, sy, isNight() ? 30 : 40, 0, Math.PI * 2); ctx.fill();
 }

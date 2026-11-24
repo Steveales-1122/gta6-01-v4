@@ -1,61 +1,35 @@
-// SUNSET KEYS v4 — turf war: 3 rival crews hold the districts, turf missions flip
-// ownership, and owned turf pays hourly income but draws police heat.
-import { G, toast, banner } from './state.js';
-import { DISTRICTS, CREWS } from './city.js';
-import { makePed } from './pedestrians.js';
+// turf.js — turf war: capture districts from the three rival crews, heat and income.
+import { G, addMessage, addXp, setWanted } from './state.js';
+import { spawnEnemy } from './combat.js';
+import { captureTurf, turfCounts } from './districts.js';
 
-/** Start a turf takeover: spawn the defending gang in that district. */
+export const CREW_COLORS = { Vipers: '#27ae60', Kings: '#8e44ad', 'Marina Boys': '#2980b9', Player: '#f1c40f' };
 export function startTurfWar(districtId) {
-  const d = DISTRICTS.find((x) => x.id === districtId);
-  if (!d) return false;
-  const owner = G.turf[districtId];
-  if (owner === 'player') { toast('Wilayah ini sudah milikmu'); return false; }
-  const crew = CREWS[owner] || CREWS.none;
-  const cx = d.x + d.w / 2, cy = d.y + d.h / 2;
-  G.mission.active = true;
-  G.mission.title = 'Perang Turf — ' + d.name;
-  G.mission.objective = 'Kalahkan ' + crew.name + ' di ' + d.name + ' (8 orang)';
-  G.mission.target = { x: cx, y: cy };
-  G.mission.data = { kills: 0, need: 8, turf: districtId };
-  for (let i = 0; i < 8; i++) {
-    const ped = makePed(cx + (Math.random() - 0.5) * 600, cy + (Math.random() - 0.5) * 500, { state: 'gang', gang: owner });
-    ped.hp = 80;
-    G.peds.push(ped);
-  }
-  banner('PERANG TURF', d.name + ' — milik ' + crew.name);
+  const d = G.turf[districtId];
+  if (d === 'Player') { addMessage('You already hold this turf', '#ff6666'); return false; }
+  const defs = { downtown: [1700, 1000], marina: [2800, 1700], beach: [700, 1800], hills: [600, 500], portside: [2800, 500], airport: [1700, 1800] };
+  const [x, y] = defs[districtId] || [1800, 1100];
+  for (let i = 0; i < 5; i++) spawnEnemy(x + (Math.random() - 0.5) * 260, y + (Math.random() - 0.5) * 260, d, 70);
+  G.mission.active = true; G.mission.title = 'Turf War';
+  G.mission.objective = 'Clear the ' + d + ' from this district';
+  G.mission.target = { x, y }; G.mission.index = -2; G.mission.turfWar = districtId;
+  G.objective = 'Turf War — clear the ' + d;
+  setWanted(Math.max(G.wanted, 2));
+  addMessage('Turf war started — defeat the ' + d, '#ff6666');
   return true;
 }
-
-/** Check a turf mission's kill count; flip the district when done. */
 export function updateTurfWar() {
-  const ms = G.mission;
-  if (!ms.active || !ms.data || !ms.data.turf) return false;
-  if (ms.data.kills >= ms.data.need) {
-    const prev = G.turf[ms.data.turf];
-    G.turf[ms.data.turf] = 'player';
-    G.heat = Math.min(100, G.heat + 15);
-    G.stats.turfTaken++;
-    banner('WILAYAH DIREBUT', DISTRICTS.find((d) => d.id === ms.data.turf).name + ' kini milikmu — +' + fmtIncome(ms.data.turf) + '/jam');
-    return true;
-  }
-  return false;
-}
-
-function fmtIncome(districtId) {
-  const d = DISTRICTS.find((x) => x.id === districtId);
-  return d ? '$' + d.income : '$0';
-}
-
-/** Spawn a few gang defenders around the player in enemy turf (ambient threat). */
-export function ambientGangSpawn(dt) {
-  if (G.wanted > 0) return;
-  const d = DISTRICTS.find((x) => G.player.x >= x.x && G.player.x < x.x + x.w && G.player.y >= x.y && G.player.y < x.y + x.h);
-  if (!d) return;
-  const owner = G.turf[d.id];
-  if (owner === 'player' || owner === 'none') return;
-  const gangCount = G.peds.filter((p) => p.gang === owner && p.state === 'gang').length;
-  if (gangCount < 3 && Math.random() < dt * 0.5) {
-    const ped = makePed(G.player.x + (Math.random() - 0.5) * 600, G.player.y + (Math.random() - 0.5) * 500, { state: 'gang', gang: owner });
-    G.peds.push(ped);
+  const m = G.mission;
+  if (!m.active || m.index !== -2) return;
+  if (G.enemies.length === 0) {
+    const name = captureTurf(m.turfWar);
+    addXp(300); addMessage('TURF CAPTURED: ' + name + ' — +$150/h income', '#ffd700');
+    G.mission.active = false; G.mission.turfWar = null;
+    G.heat = Math.min(100, G.heat + 20);
   }
 }
+export function turfSummary() {
+  const c = turfCounts();
+  return 'Turf — You ' + c.Player + ' · Vipers ' + c.Vipers + ' · Kings ' + c.Kings + ' · Marina Boys ' + c['Marina Boys'];
+}
+export function policeHeatLevel() { return G.heat >= 70 ? 'HOT' : G.heat >= 40 ? 'WARM' : 'COOL'; }

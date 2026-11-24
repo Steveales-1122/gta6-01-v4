@@ -1,43 +1,31 @@
-// SUNSET KEYS v4 — economy: cash flow, payouts, passive income and the HUD's
-// money ticker. Missions, side jobs, turf and businesses all pay into one wallet;
-// the shop, garage and properties all draw from it.
-import { G, fmtCash, toast } from './state.js';
-import { turfIncomePerHour } from './districts.js';
+// economy.js — cash, passive income from businesses and turf, hourly ticks.
+import { G, addCash, addMessage } from './state.js';
+import { turfCounts } from './districts.js';
 
-/** Passive income per game hour: businesses + turf + nothing else. */
-export function passiveIncomePerHour() {
-  let n = turfIncomePerHour();
-  for (const b of G.properties.businesses) n += b.income;
-  return n;
+export function businessIncomePerHour() {
+  return G.businesses.filter((b) => b.owned).reduce((n, b) => n + b.income, 0);
 }
-
-/** Tick the economy once per game hour: pay passive income, charge nothing. */
-export function tickEconomy() {
-  const income = passiveIncomePerHour();
-  if (income > 0) {
-    G.cash += income;
-    toast('Penghasilan pasif + ' + fmtCash(income) + ' / jam');
-  }
+export function turfIncomePerHour() {
+  return turfCounts().Player * 150;
 }
-
-/** Pay the player for a completed mission or job. */
-export function payPlayer(amount, reason) {
-  G.cash += amount;
-  toast(fmtCash(amount) + ' — ' + reason);
+export function hourlyIncome() { return businessIncomePerHour() + turfIncomePerHour(); }
+export function collectHourlyIncome() {
+  const n = hourlyIncome();
+  if (n > 0) { addCash(n); addMessage('Passive income +$' + n + ' (businesses + turf)', '#7fff9e'); }
 }
-
-/** Spend cash; returns false when the player cannot afford it. */
-export function spend(amount) {
-  if (G.cash < amount) return false;
-  G.cash -= amount;
+export function buyBusiness(id) {
+  const b = G.businesses.find((x) => x.id === id);
+  if (!b || b.owned) return false;
+  if (G.cash < b.price) { addMessage('Need $' + b.price + ' for ' + b.name, '#ff6666'); return false; }
+  G.cash -= b.price; b.owned = true;
+  addMessage('You own ' + b.name + ' — +$' + b.income + '/game hour', '#ffd700');
   return true;
 }
-
-/** Net worth for the stats screen: cash + cars + properties. */
-export function netWorth() {
-  let n = G.cash;
-  for (const c of G.ownedCars) n += c.price || 0;
-  for (const s of G.properties.safehouses) n += s.price || 0;
-  for (const b of G.properties.businesses) n += b.price || 0;
-  return n;
+export function buySafehouse(id) {
+  const s = G.safehouses.find((x) => x.id === id);
+  if (!s || s.owned) return false;
+  if (G.cash < s.price) { addMessage('Need $' + s.price + ' for ' + s.name, '#ff6666'); return false; }
+  G.cash -= s.price; s.owned = true;
+  addMessage('Safehouse bought: ' + s.name + ' — rest here to heal and save', '#ffd700');
+  return true;
 }

@@ -1,51 +1,23 @@
-// SUNSET KEYS v4 — districts, turf ownership and the city map data the HUD reads.
-// District list lives in city.js; this file owns turf income, crew standing and the
-// minimap's district tint.
-import { G } from './state.js';
-import { DISTRICTS, CREWS } from './city.js';
+// districts.js — the six districts of Port Alba and their turf owners.
+import { G, DISTRICTS } from './state.js';
 
-/** All six districts with live owner, income and heat for the HUD and turf war. */
-export function districtStates() {
-  return DISTRICTS.map((d) => ({
-    ...d,
-    owner: G.turf[d.id] || 'none',
-    crewName: (CREWS[G.turf[d.id] || 'none'] || CREWS.none).name,
-    crewColor: (CREWS[G.turf[d.id] || 'none'] || CREWS.none).color,
-  }));
+export function districtNameAt(x, y) {
+  for (const d of DISTRICTS) if (x >= d.x && x < d.x + d.w && y >= d.y && y < d.y + d.h) return d.name;
+  return 'Port Alba';
 }
-
-/** Passive turf income per in-game hour from districts the player owns. */
-export function turfIncomePerHour() {
-  let n = 0;
-  for (const d of DISTRICTS) if (G.turf[d.id] === 'player') n += d.income;
-  return n;
+export function turfOwner(districtId) { return G.turf[districtId] || 'Neutral'; }
+export function turfCounts() {
+  const c = { Player: 0, Vipers: 0, Kings: 0, 'Marina Boys': 0 };
+  for (const d of DISTRICTS) c[G.turf[d.id]] = (c[G.turf[d.id]] || 0) + 1;
+  return c;
 }
-
-/** How many districts the player controls (0-6). */
-export function turfControlled() {
-  return DISTRICTS.filter((d) => G.turf[d.id] === 'player').length;
+export function captureTurf(districtId) {
+  G.turf[districtId] = 'Player';
+  const d = DISTRICTS.find((x) => x.id === districtId);
+  return d ? d.name : districtId;
 }
-
-/** Flip a district to the player after a turf mission; raises police heat. */
-export function takeTurf(districtId) {
-  const prev = G.turf[districtId];
-  G.turf[districtId] = 'player';
-  G.heat = Math.min(100, G.heat + 15);
-  G.stats.turfTaken++;
-  return prev;
+export function districtColor(districtId) {
+  const d = DISTRICTS.find((x) => x.id === districtId);
+  return d ? d.color : '#444';
 }
-
-/** Crew standing shifts after the player helps or hurts a crew (-100..100). */
-export function shiftStanding(crew, delta) {
-  if (G.story.crewStanding[crew] === undefined) return;
-  G.story.crewStanding[crew] = Math.max(-100, Math.min(100, G.story.crewStanding[crew] + delta));
-}
-
-/** Rival crew that currently owns the most districts (the turf war's main threat). */
-export function dominantRival() {
-  const counts = { vipers: 0, kings: 0, marina: 0 };
-  for (const d of DISTRICTS) if (counts[G.turf[d.id]] !== undefined) counts[G.turf[d.id]]++;
-  let best = 'vipers', bestN = -1;
-  for (const k of Object.keys(counts)) if (counts[k] > bestN) { bestN = counts[k]; best = k; }
-  return best;
-}
+export function listDistricts() { return DISTRICTS.map((d) => ({ id: d.id, name: d.name, owner: G.turf[d.id] })); }

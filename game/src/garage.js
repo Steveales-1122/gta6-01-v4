@@ -1,69 +1,39 @@
-// SUNSET KEYS v4 — garage: buy, own, store and customise cars.
-// Owned cars live in the garage list; the player can spawn any owned car at the
-// nearest safehouse, repaint it, and tune its engine in three stages.
-import { G, fmtCash, toast } from './state.js';
-import { CAR_MODELS, makeCar } from './vehicles.js';
-import { spend } from './economy.js';
+// garage.js — buy cars, repaint, tune in 3 stages, deliver a car to the player.
+import { G, CAR_MODELS, addMessage } from './state.js';
+import { spawnCar } from './vehicles.js';
 
-export const PAINTS = [
-  { name: 'Merah Sunset', color: '#c0392b', price: 150 },
-  { name: 'Biru Laut', color: '#2980b9', price: 150 },
-  { name: 'Emas Alba', color: '#f1c40f', price: 300 },
-  { name: 'Ungu Neon', color: '#8e44ad', price: 300 },
-  { name: 'Hitam Matte', color: '#1a1a1a', price: 250 },
-  { name: 'Putih Mutiara', color: '#ecf0f1', price: 250 },
-];
-
-export const ENGINE_STAGES = [
-  { stage: 0, name: 'Standar', price: 0 },
-  { stage: 1, name: 'Turbo I', price: 800 },
-  { stage: 2, name: 'Turbo II', price: 2000 },
-  { stage: 3, name: 'Turbo III', price: 4500 },
-];
-
-/** Buy a car model from the dealership into the garage. */
-export function buyCar(modelIdx) {
-  const m = CAR_MODELS[modelIdx];
-  if (!m) return { ok: false, why: 'Model tidak ada' };
-  if (!spend(m.price)) return { ok: false, why: 'Uang kurang' };
-  const rec = { ...m, modelIdx, engine: 0, owned: true, plate: 'ALB-' + Math.floor(100 + Math.random() * 900) };
-  G.ownedCars.push(rec);
-  G.garage.push(rec);
-  toast('Mobil dibeli — ' + m.model + ' (' + rec.plate + ')');
-  return { ok: true };
+export const PAINTS = ['#c0392b', '#2980b9', '#27ae60', '#f1c40f', '#8e44ad', '#e67e22', '#ecf0f1', '#111111'];
+export const TUNE_STAGES = [0, 1500, 3500, 7000];
+export function buyGarageCar(modelId) {
+  const m = CAR_MODELS.find((c) => c.id === modelId);
+  if (!m || m.price === 0) return false;
+  if (G.cash < m.price) { addMessage('Need $' + m.price + ' for ' + m.name, '#ff6666'); return false; }
+  G.cash -= m.price;
+  G.garageCars.push({ model: m.id, color: m.color, tune: 0, paint: m.color });
+  addMessage('Bought ' + m.name + ' — in your garage', '#7fff9e');
+  return true;
 }
-
-/** Repaint an owned car. */
-export function repaintCar(rec, paintIdx) {
-  const paint = PAINTS[paintIdx];
-  if (!paint) return { ok: false, why: 'Cat tidak ada' };
-  if (!spend(paint.price)) return { ok: false, why: 'Uang kurang' };
-  rec.color = paint.color;
-  toast('Cat baru: ' + paint.name);
-  return { ok: true };
+export function repaintCar(index, color) {
+  const c = G.garageCars[index];
+  if (!c || G.cash < 300) { addMessage('Repaint costs $300', '#ff6666'); return false; }
+  G.cash -= 300; c.paint = color; c.color = color;
+  return true;
 }
-
-/** Tune an owned car's engine to the next stage. */
-export function tuneCar(rec) {
-  const next = ENGINE_STAGES[(rec.engine || 0) + 1];
-  if (!next) return { ok: false, why: 'Sudah maksimal' };
-  if (!spend(next.price)) return { ok: false, why: 'Uang kurang' };
-  rec.engine = next.stage;
-  toast('Mesin naik ke ' + next.name);
-  return { ok: true };
+export function tuneCar(index) {
+  const c = G.garageCars[index];
+  if (!c || c.tune >= 3) return false;
+  const cost = TUNE_STAGES[c.tune + 1];
+  if (G.cash < cost) { addMessage('Tune stage ' + (c.tune + 1) + ' costs $' + cost, '#ff6666'); return false; }
+  G.cash -= cost; c.tune++;
+  addMessage('Tuned to stage ' + c.tune + ' (+12% speed)', '#7fff9e');
+  return true;
 }
-
-/** Spawn an owned car next to the player (garage delivery). */
-export function deliverCar(rec) {
-  const car = makeCar(G.player.x + 90, G.player.y + 40, G.player.angle, rec.modelIdx, 'player');
-  car.color = rec.color;
-  car.engine = rec.engine || 0;
-  car.plate = rec.plate;
-  G.cars.push(car);
+export function deliverCar(index) {
+  const c = G.garageCars[index];
+  if (!c) return false;
+  const p = G.player;
+  const car = spawnCar(p.x + 60, p.y + 40, c.model, true, c.paint);
+  car.tune = c.tune;
+  addMessage(c.model + ' delivered to you', '#7fff9e');
   return car;
-}
-
-/** How many garage slots the player has (1 base + 1 per safehouse). */
-export function garageSlots() {
-  return 1 + G.properties.safehouses.length;
 }

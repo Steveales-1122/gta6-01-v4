@@ -1,111 +1,66 @@
-// SUNSET KEYS v4 — HUD: cash/XP/health/armor, wanted stars, clock, mission
-// tracker, radio, toasts, banners and the context prompt. All drawn on canvas
-// so screenshots show the full interface.
-import { G, fmtCash, clamp } from './state.js';
+// hud.js — full HUD: health, armor, cash, XP bar, wanted stars, mission tracker, clock.
+import { G, WEAPONS } from './state.js';
 import { clockText, isNight } from './daynight.js';
-import { weatherLabel } from './weather.js';
-import { objectiveText, objectiveDistance } from './missions.js';
-import { currentStation } from './radio.js';
-import { sideJobTarget } from './sidejobs.js';
+import { skillLevel } from './progression.js';
+import { stationName } from './radio.js';
+import { hourlyIncome } from './economy.js';
+import { districtNameAt } from './districts.js';
 
-/** Draw the whole HUD (skipped on the title screen). */
-export function drawHud(ctx, w, h) {
-  if (G.mode === 'title') return;
+export function drawHUD(ctx, w, h) {
   const p = G.player;
-  // Top-left: cash, XP bar, health + armour bars.
   ctx.textAlign = 'left';
-  ctx.font = 'bold 22px sans-serif';
-  ctx.fillStyle = '#ffffff';
-  ctx.shadowColor = 'rgba(0,0,0,0.7)'; ctx.shadowBlur = 4;
-  ctx.fillText(fmtCash(G.cash), 16, 34);
-  ctx.shadowBlur = 0;
-  ctx.font = '12px sans-serif';
-  ctx.fillStyle = '#ffd34d';
-  ctx.fillText('LVL ' + G.level + '  •  XP ' + Math.floor(G.xp) + '/' + (100 * G.level), 16, 54);
-  drawBar(ctx, 16, 62, 170, 10, G.health / 100, '#e5484d');
-  drawBar(ctx, 16, 76, 170, 7, G.armor / 100, '#4a90d9');
-  ctx.font = '11px sans-serif';
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText('HP', 190, 71);
-  ctx.fillText('ARMOR', 190, 83);
-  // Skills mini-readout.
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  ctx.fillText('DRV ' + Math.floor(G.skills.driving) + '  •  SHT ' + Math.floor(G.skills.shooting) + '  •  STM ' + Math.floor(G.skills.stamina), 16, 102);
-  // Top-right: wanted stars + clock + weather.
-  ctx.textAlign = 'right';
-  ctx.font = 'bold 24px sans-serif';
-  let stars = '';
-  for (let i = 0; i < 5; i++) stars += i < G.wanted ? '★' : '☆';
-  ctx.fillStyle = G.wanted > 0 ? '#ffd34d' : 'rgba(255,255,255,0.55)';
-  ctx.fillText(stars, w - 16, 34);
+  // Wanted stars top-right.
+  ctx.font = 'bold 26px sans-serif';
+  for (let i = 0; i < 5; i++) {
+    ctx.fillStyle = i < G.wanted ? '#ffd700' : 'rgba(255,255,255,0.25)';
+    ctx.fillText('★', w - 170 + i * 32, 40);
+  }
+  ctx.font = '13px sans-serif'; ctx.fillStyle = '#fff';
+  ctx.fillText(districtNameAt(p.x, p.y) + '  ·  ' + clockText() + '  ·  Day ' + G.day, w - 260, 62);
+  ctx.fillText('Weather: ' + G.weather + (isNight() ? ' · night' : ''), w - 260, 80);
+  // Cash + XP top-left.
+  ctx.font = 'bold 22px sans-serif'; ctx.fillStyle = '#7fff9e';
+  ctx.fillText('$' + Math.floor(G.cash).toLocaleString(), 16, 36);
+  ctx.font = '13px sans-serif'; ctx.fillStyle = '#fff';
+  ctx.fillText('Level ' + G.level + '  ·  XP ' + Math.floor(G.xp) + '/' + (G.level * 400), 16, 56);
+  ctx.fillStyle = '#333'; ctx.fillRect(16, 62, 180, 8);
+  ctx.fillStyle = '#ffd700'; ctx.fillRect(16, 62, 180 * Math.min(1, G.xp / (G.level * 400)), 8);
+  ctx.fillText('Income $' + hourlyIncome() + '/h  ·  ' + stationName(), 16, 88);
+  // Skills.
+  ctx.fillText('DRV ' + skillLevel('driving') + '  SHO ' + skillLevel('shooting') + '  STA ' + skillLevel('stamina'), 16, 106);
+  // Health + armor bottom-right.
+  ctx.font = 'bold 16px sans-serif';
+  ctx.fillStyle = '#e74c3c'; ctx.fillRect(w - 216, h - 46, 200 * Math.max(0, p.hp) / 100, 12);
+  ctx.strokeStyle = '#fff'; ctx.strokeRect(w - 216, h - 46, 200, 12);
+  ctx.fillStyle = '#fff'; ctx.fillText('HP ' + Math.ceil(p.hp), w - 216, h - 52);
+  if (p.armor > 0) {
+    ctx.fillStyle = '#3498db'; ctx.fillRect(w - 216, h - 28, 200 * p.armor / 100, 8);
+    ctx.fillStyle = '#fff'; ctx.fillText('ARMOR ' + Math.ceil(p.armor), w - 216, h - 14);
+  }
+  // Weapon bottom-left.
+  const wdef = WEAPONS[p.weapon];
+  ctx.font = 'bold 15px sans-serif'; ctx.fillStyle = '#fff';
+  const ammo = p.weapon === 'fists' ? '∞' : (p.ammo[p.weapon] || 0);
+  ctx.fillText(wdef.name + '  ·  ' + ammo + '  [Q cycle]', 16, h - 20);
+  // Mission tracker.
+  ctx.font = 'bold 14px sans-serif'; ctx.fillStyle = '#ffd700';
+  ctx.fillText(G.objective, 16, 130);
+  if (G.mission.active && G.mission.target) {
+    const d = Math.hypot(p.x - G.mission.target.x, p.y - G.mission.target.y);
+    ctx.fillStyle = '#fff'; ctx.font = '13px sans-serif';
+    ctx.fillText('Distance: ' + Math.round(d) + 'm', 16, 150);
+  }
+  if (G.sidejob.type) {
+    ctx.fillStyle = '#7fff9e'; ctx.font = '13px sans-serif';
+    ctx.fillText('Side job: ' + G.sidejob.type + ' — ' + Math.ceil(G.sidejob.timer) + 's left', 16, 168);
+  }
+  // Messages.
   ctx.font = '13px sans-serif';
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText(clockText() + '  •  Day ' + G.day + '  •  ' + weatherLabel() + (isNight() ? '  •  🌙' : '  •  ☀'), w - 16, 56);
-  // Mission tracker (top-right, under the clock).
-  const obj = objectiveText();
-  ctx.font = 'bold 13px sans-serif';
-  ctx.fillStyle = '#ffe9a8';
-  ctx.fillText('▶ ' + obj, w - 16, 82);
-  const dist = objectiveDistance();
-  if (dist !== null) {
-    ctx.font = '12px sans-serif';
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(dist + ' m', w - 16, 100);
-  }
-  const sj = sideJobTarget();
-  if (sj) {
-    ctx.font = 'bold 12px sans-serif';
-    ctx.fillStyle = '#7ee787';
-    ctx.fillText('◆ ' + sj.label, w - 16, 118);
-  }
-  // Bottom-right: radio station + controls hint.
-  ctx.font = '12px sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  const st = currentStation();
-  ctx.fillText('♪ ' + st.name + ' (R ganti) — ' + (G.radio.on ? 'ON' : 'OFF'), w - 16, h - 36);
-  ctx.fillStyle = 'rgba(255,255,255,0.6)';
-  ctx.fillText('WASD jalan/nyetir • E masuk mobil • Klik tembak • F interaksi • M HP • Tab Heist • P jeda', w - 16, h - 18);
-  // Bottom-centre: context prompt.
-  if (G.prompt) {
-    ctx.textAlign = 'center';
-    ctx.font = 'bold 15px sans-serif';
-    ctx.fillStyle = '#ffffff';
-    ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 5;
-    ctx.fillText(G.prompt, w / 2, h - 64);
-    ctx.shadowBlur = 0;
-    ctx.textAlign = 'left';
-  }
-  // Toasts (top centre, stacked).
-  ctx.textAlign = 'center';
-  ctx.font = 'bold 14px sans-serif';
-  G.toasts.forEach((t, i) => {
-    ctx.globalAlpha = clamp(t.t, 0, 1);
-    ctx.fillStyle = '#ffffff';
-    ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 4;
-    ctx.fillText(t.text, w / 2, 110 + i * 22);
-    ctx.shadowBlur = 0;
+  G.messages.forEach((m, i) => {
+    ctx.fillStyle = m.color;
+    ctx.fillText(m.text, 16, 190 + i * 18);
   });
-  ctx.globalAlpha = 1;
-  // Centre banner.
-  if (G.banner && G.banner.t > 0) {
-    const a = clamp(G.banner.t, 0, 1);
-    ctx.globalAlpha = a;
-    ctx.font = 'bold 34px sans-serif';
-    ctx.fillStyle = '#ffffff';
-    ctx.shadowColor = 'rgba(0,0,0,0.9)'; ctx.shadowBlur = 8;
-    ctx.fillText(G.banner.title, w / 2, h * 0.32);
-    ctx.font = 'bold 16px sans-serif';
-    ctx.fillStyle = '#ffd34d';
-    ctx.fillText(G.banner.sub, w / 2, h * 0.32 + 28);
-    ctx.shadowBlur = 0;
-    ctx.globalAlpha = 1;
-  }
-  ctx.textAlign = 'left';
-}
-
-function drawBar(ctx, x, y, w, h, frac, color) {
-  ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
-  ctx.fillStyle = color;
-  ctx.fillRect(x, y, Math.max(0, w * clamp(frac, 0, 1)), h);
+  // Controls hint.
+  ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = '11px sans-serif';
+  ctx.fillText('WASD move/drive · E interact · F enter car · Mouse aim · Click shoot · Q weapon · R radio · H heist board · G garage · B shop · P pause · M mute', 16, h - 40);
 }
