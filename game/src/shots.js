@@ -1,79 +1,156 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// SUNSET KEYS v4 — screenshot staging: ?demo=chase|heist|night|airport.
+// Each demo puts the live game into a dense, readable scene (real gameplay state,
+// never a static mock) so the screenshots show the systems at their best.
+// The game itself implements the staging; this file only sets state.
+import { G, toast, banner } from './state.js';
+import { makeCar } from './vehicles.js';
+import { makePed } from './pedestrians.js';
+import { startMission } from './missions.js';
+import { WEAPONS } from './weapons.js';
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
-
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
-    }
-  }
-  return Infinity;
+/** Stage one demo scene. Called from main.js before the first frame. */
+export function stageDemo(demo) {
+  G.demo = demo;
+  G.mode = 'play';
+  // Common: a lived-in street — traffic, peds, a couple of parked cars.
+  seedStreet(2600, 1900);
+  if (demo === 'chase') stageChase();
+  else if (demo === 'heist') stageHeist();
+  else if (demo === 'night') stageNight();
+  else if (demo === 'airport') stageAirport();
+  else stageChase();
+  G.camera.x = G.player.x - 640;
+  G.camera.y = G.player.y - 400;
 }
 
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
+/** Fill the area around (x,y) with traffic cars and pedestrians. */
+function seedStreet(x, y) {
+  for (let i = 0; i < 10; i++) {
+    const car = makeCar(x + (Math.random() - 0.5) * 1400, y + (Math.random() - 0.5) * 1000, Math.random() * Math.PI * 2, Math.floor(Math.random() * 7), 'npc');
+    car.speed = 120 + Math.random() * 80;
+    car.dir = car.angle;
+    G.cars.push(car);
   }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
-    }
+  for (let i = 0; i < 22; i++) {
+    G.peds.push(makePed(x + (Math.random() - 0.5) * 1200, y + (Math.random() - 0.5) * 900));
   }
-  return best;
 }
 
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
-export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
+/** COVER — sunset wanted-5 chase: player in a Falcon, 3 cop cars, heli + searchlight. */
+function stageChase() {
+  G.time = 17.8;
+  G.weather = 'clear';
+  const car = makeCar(2340, 1150, -Math.PI / 2, 5, 'player'); // Falcon super
+  car.color = '#c0392b';
+  car.speed = 320;
+  G.cars.push(car);
+  G.player.car = car;
+  G.player.onFoot = false;
+  G.player.x = car.x; G.player.y = car.y; G.player.angle = car.angle;
+  G.wanted = 5;
+  G.cash = 12480;
+  G.level = 3;
+  G.xp = 240;
+  G.health = 82; G.armor = 60;
+  G.skills = { driving: 64, shooting: 52, stamina: 38 };
+  // Race mission active: objective marker + tracker visible.
+  startMission(4);
+  G.mission.title = 'Balapan Sunset';
+  // Cop cars closing in + helicopter.
+  for (let i = 0; i < 3; i++) {
+    const cop = makeCar(2340 + (i - 1) * 160, 1150 + 320 + i * 60, -Math.PI / 2, 0, 'cop');
+    cop.color = '#1c2b3a';
+    cop.maxSpeed = 500;
+    cop.speed = 300;
+    G.cars.push(cop);
   }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
+  G.heli = { x: 2500, y: 900, angle: 0, alt: 200, searchAngle: 0.6, shootT: 3 };
+  G.turf = { downtown: 'player', heights: 'kings', airport: 'none', marina: 'marina', oldtown: 'player', industrial: 'kings' };
+  banner('BALAPAN SUNSET', 'Checkpoint 1/4 — polisi di belakangmu!');
+}
+
+/** Heist planning board: vault heist, preps done, crew picked, QUIET approach. */
+function stageHeist() {
+  G.time = 11.2;
+  G.weather = 'clear';
+  G.player.x = 900; G.player.y = 500;
+  G.cash = 8200;
+  G.level = 3;
+  G.heistPlan.heist = 1;
+  G.heistPlan.prepsDone = [true, true];
+  G.heistPlan.crew = [
+    { id: 'dino', name: 'Dino Varga', role: 'Driver', skill: 'Kabur cepat', cut: 0.10 },
+    { id: 'lena', name: 'Lena Marlowe', role: 'Hacker', skill: 'Matikan alarm', cut: 0.10 },
+    { id: 'nadia', name: 'Nadia Sorel', role: 'Infiltrator', skill: 'Masuk tanpa suara', cut: 0.12 },
+  ];
+  G.heistPlan.approach = 'QUIET';
+  G.mode = 'heistboard';
+  G.prevMode = 'play';
+}
+
+/** Night turf war in the rain: neon, gang shootout, cops closing in. */
+function stageNight() {
+  G.time = 22.4;
+  G.weather = 'rain';
+  G.player.x = 1300; G.player.y = 2100;
+  G.player.onFoot = true;
+  G.player.weapon = 'rifle';
+  G.weaponsOwned = { pistol: true, smg: true, shotgun: true, rifle: true };
+  G.ammo = { pistol: 60, smg: 120, shotgun: 24, rifle: 90 };
+  G.wanted = 3;
+  G.health = 74; G.armor = 45;
+  G.cash = 5400;
+  G.level = 3;
+  G.skills = { driving: 48, shooting: 71, stamina: 44 };
+  seedStreet(1300, 2100);
+  // Turf war: Vipers gang holding Old Town, shooting.
+  for (let i = 0; i < 7; i++) {
+    const ped = makePed(1300 + (Math.random() - 0.5) * 500, 2100 + (Math.random() - 0.5) * 420, { state: 'gang', gang: 'vipers' });
+    ped.hp = 80;
+    G.peds.push(ped);
   }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
+  G.mission.active = true;
+  G.mission.index = 5; // m6 'Perang Turf: Old Town' — so the engine treats it as turf
+  G.mission.title = 'Perang Turf: Old Town';
+  G.mission.objective = 'Kalahkan Vipers di Old Town (6 orang)';
+  G.mission.target = { x: 1300, y: 2100 };
+  G.mission.data = { kills: 3, need: 6, turf: 'oldtown' };
+  G.turf = { downtown: 'player', heights: 'kings', airport: 'none', marina: 'marina', oldtown: 'vipers', industrial: 'kings' };
+  const cop = makeCar(1500, 2400, -Math.PI / 2, 0, 'cop');
+  cop.color = '#1c2b3a';
+  G.cars.push(cop);
+  G.bullets.push({ x: 1200, y: 2000, angle: 0.4, speed: 600, dmg: 10, from: 'gang', t: 0.8 });
+  G.bullets.push({ x: 1400, y: 2200, angle: 2.6, speed: 600, dmg: 10, from: 'gang', t: 0.8 });
+  banner('PERANG TURF', 'Old Town — milik Vipers');
+}
+
+/** Airport: the player flying low over the runway in the Sky Jet, garage car below. */
+function stageAirport() {
+  G.time = 10.2;
+  G.weather = 'clear';
+  G.cash = 15600;
+  G.level = 3;
+  G.player.x = 4425; G.player.y = 700;
+  // Player jet parked on runway 1, nose up the runway (ready for takeoff;
+  // kept still so the shot stays on the runway, terminal and tower).
+  const plane = G.planes[1]; // Sky Jet
+  plane.x = 4425; plane.y = 700; plane.angle = -Math.PI / 2; plane.speed = 0; plane.alt = 0;
+  plane.occupied = true;
+  G.player.plane = plane;
+  G.player.onFoot = false;
+  G.player.x = plane.x; G.player.y = plane.y;
+  // Owned Falcon parked on the tarmac by the terminal + a taxi on the airport road.
+  const owned = makeCar(4330, 820, 0, 5, 'player');
+  owned.color = '#f1c40f';
+  G.cars.push(owned);
+  G.ownedCars.push({ model: 'Falcon', color: '#f1c40f', plate: 'ALB-417', engine: 2, price: 5200 });
+  // Fly mission shown but not completable during staging (target null).
+  G.mission.active = true;
+  G.mission.index = 12;
+  G.mission.title = 'Terbang Malam';
+  G.mission.objective = 'Terbangkan pesawat kargo — hindari radar';
+  G.mission.target = null;
+  G.mission.data = {};
+  toast('Alba International — lepas landas!');
+  void WEAPONS;
 }

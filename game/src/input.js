@@ -1,53 +1,51 @@
-// Keyboard and pointer input. Held keys give a steering direction; one-shot presses (start or
-// restart, pause) are queued as bit flags and taken once by the loop, so a press between two
-// frames is never lost and never counted twice.
+// SUNSET KEYS v4 — keyboard + mouse input, with remappable-feeling defaults.
+// WASD move/drive, E enter/exit vehicle, mouse aim + click shoot, F interact,
+// 1-4 weapons, R radio, P pause, M phone, Tab heist board, Shift run.
+import { G } from './state.js';
 
-export const ACTION_CONFIRM = 1;
-export const ACTION_PAUSE = 2;
+export const keys = {};
+export const keyPressed = {}; // edge-triggered: consumed by main.js each frame
 
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const CONFIRM = new Set(['Space', 'Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
+const KEYMAP = {
+  KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down',
+  KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right',
+  ShiftLeft: 'run', ShiftRight: 'run', Space: 'brake',
+  KeyE: 'enter', KeyF: 'interact', KeyR: 'radio', KeyP: 'pause',
+  KeyM: 'phone', Tab: 'heist', Escape: 'escape',
+  Digit1: 'w1', Digit2: 'w2', Digit3: 'w3', Digit4: 'w4',
+  KeyC: 'camera', KeyH: 'horn',
+};
 
-export function createInput(target) {
-  let left = false;
-  let right = false;
-  let actions = 0;
-
-  window.addEventListener('keydown', (event) => {
-    if (LEFT.has(event.code)) left = true;
-    else if (RIGHT.has(event.code)) right = true;
-    else if (CONFIRM.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_CONFIRM;
-    } else if (PAUSE.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_PAUSE;
-    } else return;
-    event.preventDefault();
+export function initInput(canvas) {
+  window.addEventListener('keydown', (e) => {
+    const action = KEYMAP[e.code];
+    if (action) {
+      if (e.code === 'Tab') e.preventDefault();
+      if (!keys[action]) keyPressed[action] = true;
+      keys[action] = true;
+    }
+    if (e.code === 'Space') e.preventDefault();
   });
-  window.addEventListener('keyup', (event) => {
-    if (LEFT.has(event.code)) left = false;
-    else if (RIGHT.has(event.code)) right = false;
+  window.addEventListener('keyup', (e) => {
+    const action = KEYMAP[e.code];
+    if (action) keys[action] = false;
   });
-  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
-  window.addEventListener('blur', () => {
-    left = false;
-    right = false;
+  window.addEventListener('blur', () => { for (const k of Object.keys(keys)) keys[k] = false; });
+  canvas.addEventListener('mousemove', (e) => {
+    const r = canvas.getBoundingClientRect();
+    // Map CSS pixels to the canvas's internal 1280x800 coordinates.
+    G.mouse.x = (e.clientX - r.left) * (canvas.width / r.width);
+    G.mouse.y = (e.clientY - r.top) * (canvas.height / r.height);
   });
-  target.addEventListener('pointerdown', () => {
-    actions |= ACTION_CONFIRM;
-  });
-
-  return {
-    /** -1 for left, 1 for right, 0 for neither or both. */
-    direction() {
-      return (right ? 1 : 0) - (left ? 1 : 0);
-    },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
-    takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
-    },
-  };
+  canvas.addEventListener('mousedown', (e) => { if (e.button === 0) G.mouse.down = true; });
+  window.addEventListener('mouseup', () => { G.mouse.down = false; });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 }
+
+/** Clear edge-triggered presses after each frame's logic has read them. */
+export function endFrameInput() {
+  for (const k of Object.keys(keyPressed)) delete keyPressed[k];
+}
+
+/** Was this action pressed this frame? */
+export function pressed(action) { return !!keyPressed[action]; }

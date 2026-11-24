@@ -1,0 +1,33 @@
+/* SUNSET KEYS v4 — Port Alba: page chrome around the game canvas. */
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #0c0f16;
+  color: #e8e8e8;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+#wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 12px;
+  box-sizing: border-box;
+}
+#game {
+  width: min(1280px, 96vw);
+  height: auto;
+  aspect-ratio: 1280 / 800;
+  background: #1a2340;
+  border: 2px solid #f5a623;
+  border-radius: 6px;
+  box-shadow: 0 0 40px rgba(245, 166, 35, 0.25);
+  cursor: crosshair;
+}
+#hint {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: #9aa0a6;
+  text-align: center;
+}
